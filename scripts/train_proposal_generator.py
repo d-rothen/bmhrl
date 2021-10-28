@@ -10,6 +10,7 @@ from epoch_loops.proposal_epoch_loops import train_loop, train_av_loop, validati
 from model.proposal_generator import MultimodalProposalGenerator, ProposalGenerator
 from utilities.proposal_utils import calc_anchors_using_kmeans
 from utilities.config_constructor import Config
+from scripts.device import get_device
 from utilities.captioning_utils import timer
 
 def train_prop(cfg):
@@ -20,7 +21,7 @@ def train_prop(cfg):
     torch.backends.cudnn.benchmark = False
     # preventing PyTorch from allocating memory on the default device (cuda:0) when the desired
     # cuda id for training is not 0.
-    torch.cuda.set_device(cfg.device_ids[0])
+    device = get_device(cfg)
 
     # exp_name = cfg.make_experiment_name()
     exp_name = cfg.curr_time[2:]
@@ -51,7 +52,7 @@ def train_prop(cfg):
     else:
         model = ProposalGenerator(cfg, anchors)
 
-    model = model.to(cfg.device)
+    model = model.to(device)
     if cfg.optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), cfg.lr, weight_decay=cfg.weight_decay)
     elif cfg.optimizer == 'sgd':

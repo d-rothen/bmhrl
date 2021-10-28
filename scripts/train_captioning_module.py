@@ -11,6 +11,7 @@ from epoch_loops.captioning_epoch_loops import (greedy_decoder, save_model,
                                                 validation_next_word_loop)
 from loss.label_smoothing import LabelSmoothing
 from model.captioning_module import BiModalTransformer, Transformer
+from scripts.device import get_device
 from utilities.captioning_utils import average_metrics_in_two_dicts, timer
 from utilities.config_constructor import Config
 
@@ -23,7 +24,7 @@ def train_cap(cfg):
     torch.backends.cudnn.benchmark = False
     # preventing PyTorch from allocating memory on the default device (cuda:0) when the desired 
     # cuda id for training is not 0.
-    torch.cuda.set_device(cfg.device_ids[0])
+    device = get_device(cfg)
 
     exp_name = cfg.curr_time[2:]
 
@@ -57,8 +58,10 @@ def train_cap(cfg):
     else:
         scheduler = None
 
-    model.to(torch.device(cfg.device))
-    model = torch.nn.DataParallel(model, cfg.device_ids)
+    model.to(device)
+    if torch.cuda.is_available:
+        model = torch.nn.DataParallel(model, cfg.device_ids)
+
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total Number of Trainable Parameters: {param_num / 1000000} Mil.')
     

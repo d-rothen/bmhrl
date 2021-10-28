@@ -1,5 +1,6 @@
 import os
 from time import localtime, strftime
+import torch
 from shutil import copytree, ignore_patterns
 
 class Config(object):
@@ -90,7 +91,7 @@ class Config(object):
         self.d_ff_caps = 4*self.d_model_caps if args.d_ff_caps is None else args.d_ff_caps
         # training
         self.device_ids = args.device_ids
-        self.device = f'cuda:{self.device_ids[0]}'
+        self.device = f'cuda:{self.device_ids[0]}' if torch.cuda.is_available() else 'cpu'
         self.train_batch_size = args.B * len(self.device_ids)
         self.inference_batch_size = args.inf_B_coeff * self.train_batch_size
         self.epoch_num = args.epoch_num
