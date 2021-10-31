@@ -120,7 +120,7 @@ def make_masks(feature_stacks, captions, modality, pad_idx):
 
 
 def training_loop(cfg, model, loader, criterion, optimizer, epoch, TBoard):
-    model.train()
+    model.train().cuda()
     train_total_loss = 0
     loader.dataset.update_iterator()
     progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'

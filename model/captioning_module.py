@@ -4,12 +4,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from epoch_loops.captioning_epoch_loops import greedy_decoder
 
 from model.blocks import (BridgeConnection, FeatureEmbedder, Identity,
                           PositionalEncoder, VocabularyEmbedder)
 from model.decoders import BiModelDecoder, Decoder
 from model.encoders import BiModalEncoder, Encoder
 from model.generators import Generator
+from utilities.dim_log import tensor_info
 
 
 
@@ -111,6 +113,10 @@ class BiModalTransformer(nn.Module):
     def __init__(self, cfg, train_dataset):
         super(BiModalTransformer, self).__init__()
 
+        #TODO for debugging purposes
+        self.train_dataset = train_dataset
+        #----
+
         if cfg.use_linear_embedder:
             self.emb_A = FeatureEmbedder(cfg.d_aud, cfg.d_model_audio)
             self.emb_V = FeatureEmbedder(cfg.d_vid, cfg.d_model_video)
@@ -161,6 +167,14 @@ class BiModalTransformer(nn.Module):
             for param in self.encoder.parameters():
                 param.requires_grad = cfg.finetune_prop_encoder
 
+    def greedy_prob_dist_to_int(self, prob_dist):
+        return torch.argmax(prob_dist, dim=2)
+
+    def words_from_prob_dist(self, prob_dist):
+        word_indices = self.greedy_prob_dist_to_int(prob_dist)
+        return [[self.train_dataset.train_vocab.itos[i] for i in ints] for ints in word_indices]
+
+
     def forward(self, src: dict, trg, masks: dict):
         V, A = src['rgb'] + src['flow'], src['audio']
         C = trg
@@ -176,11 +190,18 @@ class BiModalTransformer(nn.Module):
         C = self.pos_enc_C(C)
         
         # notation: M1m2m2 (B, Sm1, Dm1), M1 is the target modality, m2 is the source modality
+        #tensor_info('Audio-Embedding', A)
+        #tensor_info('Video-Embedding', V)
+        #tensor_info('Caption-Embedding', C)
+        
         Av, Va = self.encoder((A, V), masks)
+        #tensor_info('V-attended Audio', Av)
+        #tensor_info('A-attended Video', Va)
 
         # (B, Sc, Dc)
         C = self.decoder((C, (Av, Va)), masks)
-        
+        #tensor_info('Bimodal representation', C[0])
+
         # (B, Sc, Vc) <- (B, Sc, Dc) 
         C = self.generator(C)
 

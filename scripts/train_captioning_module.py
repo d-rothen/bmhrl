@@ -17,7 +17,7 @@ from utilities.config_constructor import Config
 
 
 def train_cap(cfg):
-    # doing our best to make it replicable
+    torch.backends.cudnn.benchmark = True    # doing our best to make it replicable
     torch.manual_seed(0)
     np.random.seed(0)
     torch.backends.cudnn.deterministic = True
@@ -60,7 +60,8 @@ def train_cap(cfg):
 
     model.to(device)
     if torch.cuda.is_available:
-        model = torch.nn.DataParallel(model, cfg.device_ids)
+        print("Num dev " + str(torch.cuda.device_count()))
+        model = torch.nn.DataParallel(model, [0,1])#cfg.device_ids)
 
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total Number of Trainable Parameters: {param_num / 1000000} Mil.')

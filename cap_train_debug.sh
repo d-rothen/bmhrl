@@ -8,7 +8,7 @@
 #SBATCH --exclude=eihw-gpu[02-03]
 #SBATCH --nodelist=eihw-gpu1
 #SBATCH --ntasks=1 
-#SBATCH --cpu-per-task=8
+#SBATCH --cpus-per-task=8
 #SBATCH --get-user-env
 #SBATCH --export=ALL
 #SBATCH -o train_debug.out
