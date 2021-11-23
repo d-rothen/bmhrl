@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import (greedy_decoder, save_model,
-                                                training_loop,
+                                                training_loop, training_loop_incremental,
                                                 validation_1by1_loop,
                                                 validation_next_word_loop)
 from loss.label_smoothing import LabelSmoothing
@@ -42,6 +42,10 @@ def train_cap(cfg):
     elif cfg.modality in ['video', 'audio']:
         model = Transformer(train_dataset, cfg)
 
+    #if cfg.pretrained_cap_model_path is not None:
+    #    cap_model_cpt = torch.load(cfg.pretrained_cap_model_path, map_location='cpu')
+    #    model.load_state_dict(cap_model_cpt['model_state_dict'])
+    
     criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
     
     if cfg.optimizer == 'adam':
@@ -61,7 +65,7 @@ def train_cap(cfg):
     model.to(device)
     if torch.cuda.is_available:
         print("Num dev " + str(torch.cuda.device_count()))
-        model = torch.nn.DataParallel(model, [0,1])#cfg.device_ids)
+        model = torch.nn.DataParallel(model, cfg.device_ids)
 
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total Number of Trainable Parameters: {param_num / 1000000} Mil.')
@@ -87,7 +91,7 @@ def train_cap(cfg):
             break
         
         # train
-        training_loop(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
+        training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
         # validation (next word)
         val_1_loss = validation_next_word_loop(
             cfg, model, val_1_loader, greedy_decoder, criterion, epoch, TBoard, exp_name
@@ -131,7 +135,7 @@ def train_cap(cfg):
                     num_epoch_best_metric_unchanged = 0
                 else:
                     num_epoch_best_metric_unchanged += 1
-                    
+
 
     print(f'{cfg.curr_time}')
     print(f'best_metric: {best_metric}')

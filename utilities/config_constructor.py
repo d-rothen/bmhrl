@@ -39,6 +39,10 @@ class Config(object):
             self.unfreeze_word_emb = args.unfreeze_word_emb
             self.model = args.model
             self.pretrained_prop_model_path = args.pretrained_prop_model_path
+
+            #if args.pretrained_cap_model_path is not None:
+            #    self.pretrained_cap_model_path = args.pretrained_cap_model_path
+
             self.finetune_prop_encoder = args.finetune_prop_encoder
         elif args.procedure == 'train_prop':
             self.word_emb_caps = args.word_emb_caps  # ActivityNetCaptionsDataset() needs it

@@ -67,6 +67,7 @@ class BiModalDecoderLayer(nn.Module):
 
         # Define sublayers
         # a comment regarding the motivation of the lambda function please see the EncoderLayer
+        #def sublayer_self_att(C): return self.self_att(C, C, C, masks['C_mask'].unsqueeze(1)) - for incremental mask
         def sublayer_self_att(C): return self.self_att(C, C, C, masks['C_mask'])
         def sublayer_enc_att_A(C): return self.enc_att_A(C, Av, Av, masks['A_mask'])
         def sublayer_enc_att_V(C): return self.enc_att_V(C, Va, Va, masks['V_mask'])

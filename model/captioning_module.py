@@ -174,6 +174,8 @@ class BiModalTransformer(nn.Module):
         word_indices = self.greedy_prob_dist_to_int(prob_dist)
         return [[self.train_dataset.train_vocab.itos[i] for i in ints] for ints in word_indices]
 
+    def next_word(self, C):
+        return C[:, -1].max(dim=-1)[1]
 
     def forward(self, src: dict, trg, masks: dict):
         V, A = src['rgb'] + src['flow'], src['audio']
@@ -204,5 +206,7 @@ class BiModalTransformer(nn.Module):
 
         # (B, Sc, Vc) <- (B, Sc, Dc) 
         C = self.generator(C)
+
+        #print(self.next_word(C))
 
         return C
