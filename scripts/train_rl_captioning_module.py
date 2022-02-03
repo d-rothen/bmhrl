@@ -9,14 +9,16 @@ from epoch_loops.captioning_epoch_loops import (greedy_decoder, save_model,
                                                 training_loop, training_loop_incremental,
                                                 validation_1by1_loop,
                                                 validation_next_word_loop)
+
+from epoch_loops.captioning_rl_loops import (rl_training_loop)
 from loss.label_smoothing import LabelSmoothing
 from model.captioning_module import BiModalTransformer, Transformer
 from scripts.device import get_device
 from utilities.captioning_utils import average_metrics_in_two_dicts, timer
 from utilities.config_constructor import Config
+from model.hrl_agent import HRLAgent
 
-
-def train_cap(cfg):
+def train_rl_cap(cfg):
     torch.backends.cudnn.benchmark = True    # doing our best to make it replicable
     torch.manual_seed(0)
     np.random.seed(0)
@@ -29,31 +31,33 @@ def train_cap(cfg):
     exp_name = cfg.curr_time[2:]
 
     train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
-    val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
-    val_2_dataset = ActivityNetCaptionsDataset(cfg, 'val_2', get_full_feat=False)
+    #val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
+    #val_2_dataset = ActivityNetCaptionsDataset(cfg, 'val_2', get_full_feat=False)
     
     # make sure that DataLoader has batch_size = 1!
     train_loader = DataLoader(train_dataset, collate_fn=train_dataset.dont_collate)
-    val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
-    val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
 
-    if cfg.modality == 'audio_video':
-        model = BiModalTransformer(cfg, train_dataset)
-    elif cfg.modality in ['video', 'audio']:
-        model = Transformer(train_dataset, cfg)
+    #TODO uncomment for later - now uses unecessary ram
+    #val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
+    #val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
 
+    model = HRLAgent(cfg=cfg, train_dataset=train_dataset)
+    
     #if cfg.pretrained_cap_model_path is not None:
     #    cap_model_cpt = torch.load(cfg.pretrained_cap_model_path, map_location='cpu')
     #    model.load_state_dict(cap_model_cpt['model_state_dict'])
     
-    criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
+    #TODO Criterion
+    #criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
     
-    if cfg.optimizer == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), cfg.lr, (cfg.beta1, cfg.beta2), cfg.eps,
-                                    weight_decay=cfg.weight_decay)
-    elif cfg.optimizer == 'sgd':
-        optimizer = torch.optim.SGD(model.parameters(), cfg.lr, cfg.momentum,
-                                    weight_decay=cfg.weight_decay)
+    #if cfg.optimizer == 'adam':
+    #    optimizer = torch.optim.Adam(model.parameters(), cfg.lr, (cfg.beta1, cfg.beta2), cfg.eps,
+    #                                weight_decay=cfg.weight_decay)
+    #elif cfg.optimizer == 'sgd':
+    #    optimizer = torch.optim.SGD(model.parameters(), cfg.lr, cfg.momentum,
+    #                                weight_decay=cfg.weight_decay)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     
     if cfg.scheduler == 'reduce_on_plateau':
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -81,6 +85,8 @@ def train_cap(cfg):
     # "early stopping" thing
     num_epoch_best_metric_unchanged = 0
 
+    criterion = False
+
     for epoch in range(cfg.epoch_num):
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
@@ -92,7 +98,7 @@ def train_cap(cfg):
         
         # train
         #training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
-        training_loop(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
+        rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
 
         # validation (next word)
         val_1_loss = validation_next_word_loop(

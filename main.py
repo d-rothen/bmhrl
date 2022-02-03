@@ -3,16 +3,22 @@ from pprint import pprint
 
 from utilities.config_constructor import Config
 from scripts.train_captioning_module import train_cap
+from scripts.train_rl_captioning_module import train_rl_cap
 from scripts.train_proposal_generator import train_prop
 from scripts.eval_on_learned_props import eval_on_learned_props
+from scripts.train_segmentation_module import train_seg
 
 def main(cfg):
     if cfg.procedure == 'train_cap':
         train_cap(cfg)
+    elif cfg.procedure == 'train_rl_cap':
+        train_rl_cap(cfg)
     elif cfg.procedure == 'train_prop':
         train_prop(cfg)
     elif cfg.procedure == 'evaluate':
         eval_on_learned_props(cfg)
+    elif cfg.procedure == 'train_seg':
+        train_seg(cfg)
     else:
         raise NotImplementedError
 
@@ -24,11 +30,24 @@ if __name__ == "__main__":
     '''
     parser = argparse.ArgumentParser(description='Run experiment')
 
+    parser.add_argument('--rl_high_level_enc_d', type=int, default=256, help='rl enc dimensions')
+    parser.add_argument('--rl_low_level_enc_d', type=int, default=512, help='rl enc dimensions')
+    parser.add_argument('--rl_worker_lstm', type=int, default=1024, help='rl worker dimensions')
+    #TODO paper had 256 for manager lstm - doesnt work with bidirectional encoder  goin up to 512?
+    parser.add_argument('--rl_manager_lstm', type=int, default=512, help='rl manager dimensions')
+    parser.add_argument('--rl_goal_d', type=int, default=64, help='rl goal dimensions')
+    parser.add_argument('--rl_attn_d', type=int, default=512, help='rl attention dimensions')
+    parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
+    parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.5, help='Required confidence to set a section')
+
+
     ## DATA
     # paths to the precalculated train meta files
     parser.add_argument('--train_meta_path', type=str, default='./data/train.csv')
     parser.add_argument('--val_1_meta_path', type=str, default='./data/val_1.csv')
     parser.add_argument('--val_2_meta_path', type=str, default='./data/val_2.csv')
+    parser.add_argument('--segmentation_vocab_path', type=str, default='./data/combined_captions.csv')
+
     parser.add_argument('--modality', type=str, default='audio_video',
                         choices=['audio', 'video', 'audio_video'],
                         help='modality to use. if audio_video both audio and video are used')
@@ -51,10 +70,11 @@ if __name__ == "__main__":
     parser.add_argument('--audio_feature_timespan', type=float,
                         default=0.96, help='audio feature timespan')
     parser.add_argument('--train_json_path', type=str, default='./data/train.json')
+    parser.add_argument('--train_segment_json_path', type=str, default='./data/CharadeCaptions/charades_captions.json')
 
     ## TRAINING
     parser.add_argument('--procedure', type=str, required=True, 
-                        choices=['train_cap', 'train_prop', 'evaluate'])
+                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg'])
     parser.add_argument('--device_ids', type=int, nargs='+', default=[0], help='separated by a whitespace')
     parser.add_argument('--start_token', type=str, default='<s>', help='starting token')
     parser.add_argument('--end_token', type=str, default='</s>', help='ending token')

@@ -20,9 +20,10 @@ def grad_m(segment, target, b_m, segment_probabilities):
 
 
 class ManagerLoss(nn.Module):
-    def __init__(self, d_manager_state) -> None:
+    def __init__(self, d_manager_state, gamma) -> None:
         super(ManagerLoss, self).__init__()
         self.manager_baseline = BaselineEstimator(d_manager_state, 1)
+        self.gamma = gamma
 
     def cider_score(self, actions, gts):
         return 0

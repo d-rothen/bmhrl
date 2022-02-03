@@ -9,3 +9,6 @@ __pycache__
 todel
 tmp
 *.out
+.vector_cache_old/
+data/
+.vector_cache_old/glove.840B.300d.txt

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, action_bounds, offset):
-        super(Actor, self).__init__()
+        super(Ator, self).__init__()
         # actor
         self.actor = nn.Sequential(
                         nn.Linear(state_dim + state_dim, 64),

@@ -34,7 +34,30 @@ class Config(object):
         self.min_freq_caps = args.min_freq_caps
 
         # model
-        if args.procedure == 'train_cap':
+
+        #rl agent
+
+        #--
+        if args.procedure == 'train_rl_cap':
+            self.rl_low_level_enc_d = args.rl_low_level_enc_d
+            self.rl_high_level_enc_d = args.rl_high_level_enc_d
+
+            self.rl_worker_lstm = args.rl_worker_lstm
+            
+            self.rl_manager_lstm = args.rl_manager_lstm
+            
+            self.rl_goal_d = args.rl_goal_d
+            self.rl_attn_d = args.rl_attn_d
+            
+            self.rl_critic_path = args.rl_critic_path
+            self.rl_critic_score_threshhold = args.rl_critic_score_threshhold
+
+            self.word_emb_caps = args.word_emb_caps
+            self.unfreeze_word_emb = args.unfreeze_word_emb
+            self.model = args.model
+            self.pretrained_prop_model_path = args.pretrained_prop_model_path
+
+        elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps
             self.unfreeze_word_emb = args.unfreeze_word_emb
             self.model = args.model
@@ -44,6 +67,13 @@ class Config(object):
             #    self.pretrained_cap_model_path = args.pretrained_cap_model_path
 
             self.finetune_prop_encoder = args.finetune_prop_encoder
+        elif args.procedure == 'train_seg':
+            self.word_emb_caps = args.word_emb_caps
+            self.unfreeze_word_emb = args.unfreeze_word_emb
+            self.model = args.model
+            self.segmentation_vocab_path = args.segmentation_vocab_path
+            self.train_segment_json_path = args.train_segment_json_path
+
         elif args.procedure == 'train_prop':
             self.word_emb_caps = args.word_emb_caps  # ActivityNetCaptionsDataset() needs it
             self.pretrained_cap_model_path = args.pretrained_cap_model_path

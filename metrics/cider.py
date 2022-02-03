@@ -7,7 +7,7 @@
 #
 # Authors: Ramakrishna Vedantam <vrama91@vt.edu> and Tsung-Yi Lin <tl483@cornell.edu>
 
-from cider_scorer import CiderScorer
+from metrics.cider_scorer import CiderScorer
 import pdb
 
 class Cider:
@@ -52,3 +52,11 @@ class Cider:
 
     def method(self):
         return "CIDEr"
+
+print("Done")
+
+t="Why hello there"
+r = "Well hello there"
+c = Cider()
+print(c.compute_score(t, r))
+print("Done")

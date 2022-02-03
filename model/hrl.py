@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
+class HrlAgent(nn.Module):
+    def __init__(self, d_voc_size, d_worker_state, d_manager_state, d_joint_features, d_goal, d_word_embedding
+    ) -> None:
+        super(HrlAgent, self).__init__()
+        self.worker = Worker(d_voc_size, d_worker_state=d_worker_state, d_features=d_joint_features, d_goal=d_goal, 
+        d_word_embedding=d_word_embedding,)
+
 class GoalNetwork(nn.Module):
     def __init__(self, d_manager_state, d_fc2, d_goal, dropout_p) -> None:
         super(GoalNetwork, self).__init__()
@@ -18,6 +25,24 @@ class GoalNetwork(nn.Module):
         x = self.fc2(x)
 
         return x
+
+class LowLevelEncoder(nn.Module):
+    def __init__(self, d_joint_features, d_low_level_encoder) -> None:
+        super(LowLevelEncoder, self).__init__()
+        self.bilstm = torch.nn.LSTM(input_size=d_joint_features, hidden_size=d_low_level_encoder, bidirectional=True)
+
+    def forward(self, joint_features):
+        output, (h_n, c_n) = self.bilstm(joint_features)
+        return output, (h_n, c_n)
+
+class HighLevelEncoder(nn.Module):
+    def __init__(self, d_low_level_encoder, d_high_level_encoder) -> None:
+        super(HighLevelEncoder, self).__init__()
+        self.bilstm = torch.nn.LSTM(input_size=d_low_level_encoder, hidden_size=d_high_level_encoder)
+
+    def forward(self, joint_features):
+        output, (h_n, c_n) = self.bilstm(joint_features)
+        return output, (h_n, c_n)
 
 class ContextAttention(nn.Module):
     def __init__(self, d_features, d_state, d_model) -> None:
@@ -71,7 +96,7 @@ class Worker(nn.Module):
         super(Worker, self).__init__()
         d_model = 512
         self.context_atn = ContextAttention(d_features=d_features, d_state=d_worker_state, d_model=d_model)
-        self.worker_lstm = nn.LSTM(input_size=d_context + d_goal + d_word_embedding, hidden_size=d_worker_state, bidirectional=True)
+        self.worker_lstm = nn.LSTM(input_size=d_context + d_goal + d_word_embedding, hidden_size=d_worker_state)
         self.classifier = nn.Linear(in_features=d_worker_state, out_features=voc_size)
         self.softmax = nn.Softmax()
         self.baseline_estimator = BaselineEstimator(d_worker_state, 1)
