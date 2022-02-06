@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser.add_argument('--rl_attn_d', type=int, default=512, help='rl attention dimensions')
     parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
     parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.5, help='Required confidence to set a section')
-
+    parser.add_argument('--rl_dropout', type=float, default=0.3, help='rl dropout')
 
     ## DATA
     # paths to the precalculated train meta files
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     parser.add_argument('--momentum', type=float, default=0.0)
     parser.add_argument('--scheduler', type=str, default='constant',
                         choices=['constant', 'reduce_on_plateau'], help='lr scheduler')
-    parser.add_argument('--lr', type=float, default=5e-5, help='lr (if scheduler is constant)')
+    parser.add_argument('--lr', type=float, default=1e-2, help='lr (if scheduler is constant)')
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--lr_patience', type=int, help='ReduceLROnPlateau arguments')
     parser.add_argument('--lr_reduce_factor', type=float,

@@ -46,6 +46,15 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
     train_total_loss = 0
     loader.dataset.update_iterator()
     progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
+
+    train_worker = True
+
+    if train_worker:
+        model.module.set_freeze_manager(True)
+        model.module.set_freeze_worker(False)
+    else:
+        model.module.set_freeze_manager(False)
+        model.module.set_freeze_worker(True)
     
     for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
         optimizer.zero_grad()
@@ -56,9 +65,20 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
         src = batch['feature_stacks']
 
         video_features = src['rgb'] + src['flow']
-        caption, worker_losses, manager_losses = model(video_features[:,:5,:], masks['V_mask'], batch['captions'])
-        B,_,_ = video_features.shape
-        worker_losses.mean().backward()
+        iteration = model(video_features, masks['V_mask'], batch['captions'], train_worker)
+
+        if train_worker:
+            worker_loss = iteration["worker_loss"].mean()
+            model.module.set_freeze_worker_baseline(True)
+            worker_loss.backward()
+            model.module.set_freeze_worker_baseline(False)
+            iteration['worker_baseline_loss'].mean().backward()#TODO check cutoffs
+            print(worker_loss)
+        else:
+            manager_loss = iteration["manager_loss"].mean()
+            manager_loss.backward()
+            iteration['manager_baseline_loss'].mean().backward()#TODO check cutoffs
+            print(manager_loss)
 
         optimizer.step()
         #manager_losses.mean().backward()

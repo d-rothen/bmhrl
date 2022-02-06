@@ -101,10 +101,10 @@ class Manager(nn.Module):
     def forward(self, high_level_features, worker_state):#, critic_segments, old_goals):
         lstm_in = torch.cat([high_level_features, worker_state], -1).unsqueeze(1)#TODO use sequential model
         output, (h_n, c_n) = self.manager_lstm(lstm_in)
-
+        #output 0 mu_theta_m
         x = self.projection_1(output)
         x = self.tanh(x)
-        x = self.projection_2(x)
+        x = self.projection_2(x) #g_t
 
         if self.exploration:
             noise = torch.empty(self.d_goal).normal_(mean=self.noise_mean, std=self.noise_std)
@@ -137,6 +137,9 @@ class Critic(nn.Module):
         self.lin = nn.Linear(2*embed_dim, 1)
         self.relu = AReLU()
         self.relu2 = AReLU()
+
+        for name, param in self.named_parameters():
+            param.requires_grad = False
         
     def forward(self, embedded_indices):
         #Pretrained Critic
@@ -223,11 +226,7 @@ class HRLAgent(nn.Module):
 
         self.high_level_encoder = HighLevelEncoder(d_low_level_features=cfg.rl_low_level_enc_d,
         d_hidden_state=cfg.rl_high_level_enc_d)
-
-    def worker_loss(self, distribution, action):
-        #subtract = nn.functional.one_hot(action, self.voc_size) 
-        return 
-
+        
     def cumulative_worker_reward(self, step_rewards, segments):
         B, S = segments.shape
         m, am = torch.max(segments, 1)
@@ -237,7 +236,27 @@ class HRLAgent(nn.Module):
             rewards[b]= step_rewards[b,from_index:].sum()
         return rewards
 
-    def forward(self, x, mask, gts):
+    def set_freeze_manager_baseline(self, freeze):
+        for name, param in self.manager_baseline_estimator.named_parameters():
+            param.requires_grad = not freeze
+
+    def set_freeze_worker_baseline(self, freeze):
+        for name, param in self.worker_baseline_estimator.named_parameters():
+            param.requires_grad = not freeze 
+
+    def set_freeze_worker(self, freeze):
+        for name, param in self.worker.named_parameters():
+            param.requires_grad = not freeze
+        for name, param in self.worker_context_atn.named_parameters():
+            param.requires_grad = not freeze
+
+    def set_freeze_manager(self, freeze):
+        for name, param in self.manager.named_parameters():
+            param.requires_grad = not freeze
+        for name, param in self.manager_context_atn.named_parameters():
+            param.requires_grad = not freeze
+
+    def forward(self, x, mask, gts, train_worker):
         # x = (B, L, 1024)
         B,L,_ = x.shape
         score = MeteorScore(self.vocab, gts)
@@ -255,8 +274,16 @@ class HRLAgent(nn.Module):
         segments = torch.zeros(size=(B,1), dtype=torch.int32)
         worker_losses = torch.zeros(size=(B,self.max_len))
         manager_losses = torch.zeros(size=(B,self.max_len))
+        worker_baseline_losses = torch.zeros(size=(B,self.max_len))
+        manager_baseline_losses = torch.zeros(size=(B,self.max_len))
 
+        completion_mask = torch.zeros(B).bool()
+
+        #TODO finish on full completion mask
         for i in range(self.max_len):
+            if torch.all(completion_mask):
+                break
+
             last_word = caption[:,word_index,:]
             
             worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
@@ -267,9 +294,13 @@ class HRLAgent(nn.Module):
 
             distribution = Categorical(next_word)
             action = distribution.sample()
-            word_score = score.delta_meteor_step(action)
-            worker_loss = (word_score - worker_baseline) * distribution.log_prob(action)
+            eos = action == self.pad_index
+            completion_mask = completion_mask | eos
 
+            word_score = score.delta_meteor_step(action)
+            worker_baseline_losses[:, word_index] = (word_score - worker_baseline)**2
+            #worker_loss = (word_score - worker_baseline) * distribution.log_prob(action) * (~eos).float()
+            worker_loss = word_score * distribution.log_prob(action) * (~eos).float()
             worker_losses[:,word_index] = worker_loss
 
             embedded_words = self.embedding(action)
@@ -291,6 +322,7 @@ class HRLAgent(nn.Module):
             manager_ctx = self.manager_context_atn(high_level_features, last_m_h)
             next_goal, (m_h, m_c) = self.manager(manager_ctx, w_h.squeeze())#TODO critic and lastgoal
             manager_baseline = self.manager_baseline_estimator(m_h).squeeze()#TODO Cut gradient from manager from baseline
+            manager_baseline_losses[:, word_index] = (segment_score - manager_baseline)**2
 
             #Only regard reward sums if a segment ended here
             #TODO what if segments change (critic is LSTM!)
@@ -304,5 +336,6 @@ class HRLAgent(nn.Module):
             goal = persistent_goals + new_goal_factor * next_goal.squeeze()
             #Append next word(s)
             word_index += 1
-        return caption, worker_losses[:, :word_index], manager_losses[:, :word_index]
+        return {"caption": caption, "worker_loss": worker_losses[:, :word_index], "manager_loss": manager_losses[:, :word_index], 
+        "worker_baseline_loss": worker_baseline_losses[:, :word_index], "manager_baseline_loss": manager_baseline_losses[:, :word_index]}
 
