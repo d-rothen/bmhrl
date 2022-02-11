@@ -6,7 +6,7 @@ def word_from_vector(vocab, indices):
     return np.array([vocab.itos[i] for i in indices])
 
 class MeteorScore():
-    def __init__(self, vocab, gts, gamma=0.9):
+    def __init__(self, device, vocab, gts, gamma=0.9):
         self.vocab = vocab
         self.hypos = []
         self.scores = []
@@ -17,13 +17,14 @@ class MeteorScore():
             self.scores.append([0.0])
             self.section_scores.append([0.0])
             self.hypos.append("")
-        self.gamma = torch.tensor(gamma) 
+        self.device = device
+        self.gamma = torch.tensor(gamma).to(self.device).float()
 
     def _discounted_reward(self, meteor_scores):
-        scores = torch.tensor(meteor_scores)[:,1:]#Cut initial 0 score
+        scores = torch.tensor(meteor_scores).to(self.device)[:,1:].float()#Cut initial 0 score
         d_B, d_seq = scores.shape
 
-        discounts = self.gamma ** torch.arange(0, d_seq).float()
+        discounts = self.gamma ** torch.arange(0, d_seq).to(self.device).float()
         discounts = discounts.repeat(d_B, 1).float()
         
         discounted_rewards = discounts * scores
@@ -39,7 +40,8 @@ class MeteorScore():
             score = meteor_score([self.gts[b]], self.hypos[b]) - last_score
             self.scores[b].append(score)
         
-        return self._discounted_reward(self.scores)
+        scores = torch.from_numpy(np.array(self.scores))
+        return self._discounted_reward(scores)
 
     #Called after delta_meteor step finished a section via critic
     #Not immutable! Section score saved on every call

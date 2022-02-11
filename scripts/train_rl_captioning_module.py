@@ -5,12 +5,11 @@ from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
 
 from datasets.captioning_dataset import ActivityNetCaptionsDataset
-from epoch_loops.captioning_epoch_loops import (greedy_decoder, save_model,
+from epoch_loops.captioning_epoch_loops import (save_model,
                                                 training_loop, training_loop_incremental,
-                                                validation_1by1_loop,
-                                                validation_next_word_loop)
-
-from epoch_loops.captioning_rl_loops import (rl_training_loop)
+                                                validation_1by1_loop)
+from metrics.validation import MeteorCriterion
+from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop)
 from loss.label_smoothing import LabelSmoothing
 from model.captioning_module import BiModalTransformer, Transformer
 from scripts.device import get_device
@@ -31,15 +30,17 @@ def train_rl_cap(cfg):
     exp_name = cfg.curr_time[2:]
 
     train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
-    #val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
-    #val_2_dataset = ActivityNetCaptionsDataset(cfg, 'val_2', get_full_feat=False)
-    
+    val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
+    val_2_dataset = ActivityNetCaptionsDataset(cfg, 'val_2', get_full_feat=False)
+    meteor_1_criterion = MeteorCriterion(val_1_dataset.train_vocab)
+    meteor_2_criterion = MeteorCriterion(val_2_dataset.train_vocab)
     # make sure that DataLoader has batch_size = 1!
     train_loader = DataLoader(train_dataset, collate_fn=train_dataset.dont_collate)
 
     #TODO uncomment for later - now uses unecessary ram
-    #val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
-    #val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
+    val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
+    val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
+
 
     model = HRLAgent(cfg=cfg, train_dataset=train_dataset)
     
@@ -98,14 +99,14 @@ def train_rl_cap(cfg):
         
         # train
         #training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
-        rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
-
+        #rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
+        model.module.set_inference_mode(True)
         # validation (next word)
         val_1_loss = validation_next_word_loop(
-            cfg, model, val_1_loader, greedy_decoder, criterion, epoch, TBoard, exp_name
+            cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
         )
         val_2_loss = validation_next_word_loop(
-            cfg, model, val_2_loader, greedy_decoder, criterion, epoch, TBoard, exp_name
+            cfg, model, val_2_loader, inference, meteor_2_criterion, epoch, TBoard, exp_name
         )
         val_avg_loss = (val_1_loss + val_2_loss) / 2
 
@@ -116,10 +117,10 @@ def train_rl_cap(cfg):
         if epoch >= cfg.one_by_one_starts_at:
             # validation with g.t. proposals
             val_1_metrics = validation_1by1_loop(
-                cfg, model, val_1_loader, greedy_decoder, epoch, TBoard
+                cfg, model, val_1_loader, inference, epoch, TBoard
             )
             val_2_metrics = validation_1by1_loop(
-                cfg, model, val_2_loader, greedy_decoder, epoch, TBoard
+                cfg, model, val_2_loader, inference, epoch, TBoard
             )
             
             if cfg.to_log:
@@ -143,6 +144,8 @@ def train_rl_cap(cfg):
                     num_epoch_best_metric_unchanged = 0
                 else:
                     num_epoch_best_metric_unchanged += 1
+        model.module.set_inference_mode(False)
+
 
 
     print(f'{cfg.curr_time}')

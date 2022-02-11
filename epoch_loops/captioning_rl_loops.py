@@ -41,6 +41,40 @@ def make_masks(feature_stacks, captions, modality, pad_idx):
 
     return masks
 
+def greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
+    #assert model.training is False, 'call model.eval first'
+
+    with torch.no_grad():
+        
+        if 'audio' in modality:
+            B, _Sa_, _Da_ = feature_stacks['audio'].shape
+            device = feature_stacks['audio'].device
+        elif modality == 'video':
+            B, _Sv_, _Drgb_ = feature_stacks['rgb'].shape
+            device = feature_stacks['rgb'].device
+        else:
+            raise Exception(f'Unknown modality: {modality}')
+
+        # a mask containing 1s if the ending tok occured, 0s otherwise
+        # we are going to stop if ending token occured in every sequence
+        completeness_mask = torch.zeros(B, 1).byte().to(device)
+        trg = (torch.ones(B, 1) * start_idx).long().to(device)
+
+        while (trg.size(-1) <= max_len) and (not completeness_mask.all()):
+            masks = make_masks(feature_stacks, trg, modality, pad_idx)#TODO Like this we get a mask allowing the WHOLE image + audio sequence ?
+            preds = model(feature_stacks, trg, masks)
+            next_word = preds[:, -1].max(dim=-1)[1].unsqueeze(1)
+            trg = torch.cat([trg, next_word], dim=-1)
+            completeness_mask = completeness_mask | torch.eq(next_word, end_idx).byte()
+
+        return trg
+
+def inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
+    video_features = feature_stacks['rgb'] + feature_stacks['flow']
+    iteration = model(video_features, 0, False)
+    return iteration['actions']#TODO or return embedddings?
+
+
 def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
     model.train()#.cuda()
     train_total_loss = 0
@@ -69,11 +103,11 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
 
         if train_worker:
             worker_loss = iteration["worker_loss"].mean()
-            model.module.set_freeze_worker_baseline(True)
+            #model.module.set_freeze_worker_baseline(True)
             worker_loss.backward()
-            model.module.set_freeze_worker_baseline(False)
-            iteration['worker_baseline_loss'].mean().backward()#TODO check cutoffs
-            print(worker_loss)
+            #model.module.set_freeze_worker_baseline(False)
+            #iteration['worker_baseline_loss'].mean().backward()#TODO check cutoffs
+            #print(worker_loss)
         else:
             manager_loss = iteration["manager_loss"].mean()
             manager_loss.backward()
@@ -115,3 +149,27 @@ def training_loop_rl(cfg, model, loader, criterion, optimizer, epoch, TBoard):
         TBoard.add_scalar('debug/train_loss_epoch', train_total_loss_norm, epoch)
         TBoard.add_scalar('debug/lr', get_lr(optimizer), epoch)
             
+def validation_next_word_loop(cfg, model, loader, decoder, criterion, epoch, TBoard, exp_name):
+    model.eval()
+    val_total_loss = 0
+    loader.dataset.update_iterator()
+    phase = loader.dataset.phase
+    progress_bar_name = f'{cfg.curr_time[2:]}: {phase} {epoch} @ {cfg.device}'
+
+    for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
+        caption_idx = batch['caption_data'].caption
+        caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
+        src = batch['feature_stacks']
+        video_features = src['rgb'] + src['flow']
+        masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)
+
+        with torch.no_grad():
+            pred = model(video_features, masks['V_mask'], batch['captions'],  False)
+            predicted_caption = pred["caption"]
+            #n_tokens = (caption_idx_y != loader.dataset.pad_idx).sum()
+            loss = criterion(batch['captions'], predicted_caption)
+            val_total_loss += loss.item()
+            
+    val_total_loss_norm = val_total_loss / len(loader)
+
+    return val_total_loss_norm
