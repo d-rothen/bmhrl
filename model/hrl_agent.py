@@ -263,6 +263,63 @@ class HRLAgent(nn.Module):
         for name, param in self.manager_context_atn.named_parameters():
             param.requires_grad = not freeze
 
+    def warmstart(self, x, gts):
+        # x = (B, L, 1024)
+        B,L = gts.shape
+
+        low_level_features, (l_h, l_c) = self.low_level_encoder(x)
+        high_level_features, (h_h, h_c)  = self.high_level_encoder(low_level_features)
+
+        word_index = 0 
+        goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
+        last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
+        last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)
+
+        completion_mask = torch.zeros(B).bool().to(self.device)
+
+        gt_embeddings = self.embedding(gts)
+        likelyhood = torch.zeros(size=(B,self.max_len)).to(self.device)
+
+        segments = self.critic(gt_embeddings)
+        segments_sm = torch.sigmoid(segments)
+        segment_labels = (segments_sm > self.critic_score_threshhold).squeeze().int()
+
+        #TODO finish on full completion mask
+        for i in range(self.max_len):
+            if i >= L or torch.all(completion_mask):
+                break
+
+            last_word = gt_embeddings[:,word_index,:]
+            desired_word_index = gts[:,word_index]
+            worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
+
+            next_word, (w_h, w_c) = self.worker(goal, worker_ctx, last_word)
+            worker_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+
+            distribution = Categorical(next_word)
+            #See how likely groudntruth would have occured
+            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()
+
+            eos = desired_word_index == self.pad_index
+            completion_mask = completion_mask | eos
+
+            iteration_labels = segment_labels[:,word_index]
+
+            persistent_goal_factor = (~iteration_labels.bool()).int().repeat(self.d_goal, 1).T.float()
+            new_goal_factor = iteration_labels.repeat(self.d_goal, 1).T.float()
+
+            persistent_goals = persistent_goal_factor * goal
+
+            manager_ctx = self.manager_context_atn(high_level_features, last_m_h)
+            next_goal, (m_h, m_c) = self.manager(manager_ctx, w_h.squeeze())#TODO critic and lastgoal
+
+            last_w_h = w_h.squeeze()
+            last_m_h = m_h.squeeze()
+            goal = persistent_goals + new_goal_factor * next_goal.squeeze()
+            #Append next word(s)
+            word_index += 1
+        return likelyhood
+
     def forward(self, x, mask, gts, train_worker):
         # x = (B, L, 1024)
         B,L,_ = x.shape
@@ -276,7 +333,7 @@ class HRLAgent(nn.Module):
         caption = torch.unsqueeze(self.embedding(start_index), 1).to(self.device)
         actions = torch.unsqueeze(start_index, 1).to(self.device)
 
-        word_index = 0 
+        word_index = 0#TODO can safely use iteration int from for loop?
         goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
         last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
         last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)

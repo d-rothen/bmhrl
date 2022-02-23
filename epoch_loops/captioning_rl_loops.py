@@ -5,6 +5,7 @@ import torch
 import spacy
 from time import time
 
+
 from model.masking import mask
 from evaluation.evaluate import ANETcaptions
 from datasets.load_features import load_features_from_npy
@@ -69,11 +70,33 @@ def greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, 
 
         return trg
 
-def inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
+def inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality, captions):
     video_features = feature_stacks['rgb'] + feature_stacks['flow']
-    iteration = model(video_features, 0, False)
+    iteration = model(video_features, 0, captions, False)
     return iteration['actions']#TODO or return embedddings?
 
+
+def warmstart(cfg, model, loader, optimizer, epoch, TBoard):
+    model.train()#.cuda()
+    loader.dataset.update_iterator()
+    progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
+
+    for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
+        optimizer.zero_grad()
+        caption_idx = batch['caption_data'].caption 
+        caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
+        masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)#video and audio feature vectors are 1024/128 1es for "non processed" video/audio -> create bool mask
+
+        src = batch['feature_stacks']
+
+        video_features = src['rgb'] + src['flow']
+        likelihood = model.module.warmstart(video_features, batch['caption_data'].caption)
+        loss = -torch.sum(torch.log(likelihood))
+        loss = loss * 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
+        loss.backward()
+
+        optimizer.step()
+        #manager_losses.mean().backward()
 
 def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
     model.train()#.cuda()
@@ -102,11 +125,13 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
         iteration = model(video_features, masks['V_mask'], batch['captions'], train_worker)
 
         if train_worker:
+            iteration['worker_baseline_loss'].mean().backward(retain_graph=True)#TODO check cutoffs
+            
+            model.module.set_freeze_worker_baseline(True)
             worker_loss = iteration["worker_loss"].mean()
-            #model.module.set_freeze_worker_baseline(True)
             worker_loss.backward()
-            #model.module.set_freeze_worker_baseline(False)
-            #iteration['worker_baseline_loss'].mean().backward()#TODO check cutoffs
+            model.module.set_freeze_worker_baseline(False)
+            
             #print(worker_loss)
         else:
             manager_loss = iteration["manager_loss"].mean()
@@ -165,10 +190,10 @@ def validation_next_word_loop(cfg, model, loader, decoder, criterion, epoch, TBo
 
         with torch.no_grad():
             pred = model(video_features, masks['V_mask'], batch['captions'],  False)
-            predicted_caption = pred["caption"]
+            predicted_caption = pred["actions"]
             #n_tokens = (caption_idx_y != loader.dataset.pad_idx).sum()
             loss = criterion(batch['captions'], predicted_caption)
-            val_total_loss += loss.item()
+            val_total_loss += loss
             
     val_total_loss_norm = val_total_loss / len(loader)
 

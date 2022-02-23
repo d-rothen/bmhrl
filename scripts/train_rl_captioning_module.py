@@ -3,13 +3,14 @@ import numpy as np
 import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
+from utilities.out_log import print_to_file as print_log
 
 from datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import (save_model,
                                                 training_loop, training_loop_incremental,
                                                 validation_1by1_loop)
 from metrics.validation import MeteorCriterion
-from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop)
+from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop, warmstart)
 from loss.label_smoothing import LabelSmoothing
 from model.captioning_module import BiModalTransformer, Transformer
 from scripts.device import get_device
@@ -28,6 +29,8 @@ def train_rl_cap(cfg):
     device = get_device(cfg)
 
     exp_name = cfg.curr_time[2:]
+
+    
 
     train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
     val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
@@ -88,7 +91,15 @@ def train_rl_cap(cfg):
 
     criterion = False
 
+    out_file = "rl.out"
+
+
     for epoch in range(cfg.epoch_num):
+
+        val_1_metrics = validation_1by1_loop(
+            cfg, model, val_1_loader, inference, epoch, TBoard
+        )
+        
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
         print(f'Started @ {cfg.curr_time}; Current timer: {timer(cfg.curr_time)}')
@@ -99,7 +110,12 @@ def train_rl_cap(cfg):
         
         # train
         #training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
-        #rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
+
+        if epoch == -1:
+            print("Warmstarting HRL agent")
+            warmstart(cfg, model, train_loader, optimizer, epoch, TBoard)#TODO does it work here?
+        else:
+            rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
         model.module.set_inference_mode(True)
         # validation (next word)
         val_1_loss = validation_next_word_loop(
@@ -109,6 +125,8 @@ def train_rl_cap(cfg):
             cfg, model, val_2_loader, inference, meteor_2_criterion, epoch, TBoard, exp_name
         )
         val_avg_loss = (val_1_loss + val_2_loss) / 2
+
+        print_log(out_file, f'{val_1_loss} {val_2_loss}')
 
         if scheduler is not None:
             scheduler.step(val_avg_loss)
@@ -122,7 +140,7 @@ def train_rl_cap(cfg):
             val_2_metrics = validation_1by1_loop(
                 cfg, model, val_2_loader, inference, epoch, TBoard
             )
-            
+
             if cfg.to_log:
                 # averaging metrics obtained from val_1 and val_2
                 metrics_avg = average_metrics_in_two_dicts(val_1_metrics, val_2_metrics)
