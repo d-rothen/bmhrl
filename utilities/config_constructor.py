@@ -34,7 +34,7 @@ class Config(object):
         self.min_freq_caps = args.min_freq_caps
 
         # model
-
+        self.pretrained_cap_model_path = args.pretrained_cap_model_path
         #rl agent
 
         #--
@@ -56,6 +56,7 @@ class Config(object):
             self.unfreeze_word_emb = args.unfreeze_word_emb
             self.model = args.model
             self.pretrained_prop_model_path = args.pretrained_prop_model_path
+            self.rl_model_dir = args.rl_model_dir
 
         elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps
@@ -67,12 +68,14 @@ class Config(object):
             #    self.pretrained_cap_model_path = args.pretrained_cap_model_path
 
             self.finetune_prop_encoder = args.finetune_prop_encoder
-        elif args.procedure == 'train_seg':
+        elif args.procedure == 'train_critic':
             self.word_emb_caps = args.word_emb_caps
             self.unfreeze_word_emb = args.unfreeze_word_emb
             self.model = args.model
             self.segmentation_vocab_path = args.segmentation_vocab_path
             self.train_segment_json_path = args.train_segment_json_path
+            
+            self.train_csv_path = args.train_csv_path
 
         elif args.procedure == 'train_prop':
             self.word_emb_caps = args.word_emb_caps  # ActivityNetCaptionsDataset() needs it

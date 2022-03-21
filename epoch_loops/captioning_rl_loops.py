@@ -83,19 +83,35 @@ def warmstart(cfg, model, loader, optimizer, epoch, TBoard):
 
     for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
         optimizer.zero_grad()
-        caption_idx = batch['caption_data'].caption 
-        caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
-        masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)#video and audio feature vectors are 1024/128 1es for "non processed" video/audio -> create bool mask
+        #caption_idx = batch['caption_data'].caption 
+        #caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
+        #masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)#video and audio feature vectors are 1024/128 1es for "non processed" video/audio -> create bool mask
 
         src = batch['feature_stacks']
 
         video_features = src['rgb'] + src['flow']
         likelihood = model.module.warmstart(video_features, batch['caption_data'].caption)
-        loss = -torch.sum(torch.log(likelihood))
-        loss = loss * 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
+
+        loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding
+        B,L = loss_mask.shape
+
+
+        log_l = torch.log(likelihood)
+        _,Ll = log_l.shape
+        zero_padding = Ll - L
+        padded_loss_mask = torch.nn.functional.pad(loss_mask, (0,zero_padding,0,0), value=0)
+        
+        log_l = (log_l * padded_loss_mask)[:,1:]#Also get rid of <s> prob
+        log_l[log_l != log_l] = 0#TODO trick to remove nans, that appeared by multiplying 0 times -inf (-inf from log operation on 0 values)
+
+        loss = -torch.sum(log_l)
+        #loss = loss * 1e-2#* 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
         loss.backward()
 
         optimizer.step()
+
+        #if i > 100:
+            #break
         #manager_losses.mean().backward()
 
 def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):

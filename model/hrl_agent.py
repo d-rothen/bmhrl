@@ -11,20 +11,24 @@ from torch.utils.data import Dataset
 from model.captioning_module import VocabularyEmbedder
 from torchtext import data
 from scripts.device import get_device
+import sys
+import os
 import spacy
 
 class BaselineEstimator(nn.Module):
-    def __init__(self, inputSize, outputSize):
+    def __init__(self, inputSize, outputSize, name):
         super(BaselineEstimator, self).__init__()
         self.linear = torch.nn.Linear(inputSize, outputSize)
+        self.name = name
 
     def forward(self, x):
         out = self.linear(x)
         return out
 
 class LowLevelEncoder(nn.Module):
-    def __init__(self, d_joint_features, d_hidden_state) -> None:
+    def __init__(self, d_joint_features, d_hidden_state, name="low_level_enc") -> None:
         super(LowLevelEncoder, self).__init__()
+        self.name = name
         self.bilstm = torch.nn.LSTM(input_size=d_joint_features, hidden_size=d_hidden_state,
         batch_first=True, bidirectional=True)
 
@@ -33,11 +37,12 @@ class LowLevelEncoder(nn.Module):
         return output, (h_n, c_n)
 
 class HighLevelEncoder(nn.Module):
-    def __init__(self, d_low_level_features, d_hidden_state) -> None:
+    def __init__(self, d_low_level_features, d_hidden_state, name="high_level_enc") -> None:
         super(HighLevelEncoder, self).__init__()
+        self.name = name
         #2x because bidirectional -> LLEncoder output is 2x d
         self.bilstm = torch.nn.LSTM(input_size=2*d_low_level_features, hidden_size=d_hidden_state,
-        batch_first=True, bidirectional=True)
+        batch_first=True, bidirectional=True)#TODO uni directional?
 
     def forward(self, joint_features):
         output, (h_n, c_n) = self.bilstm(joint_features)
@@ -51,9 +56,10 @@ class HighLevelEncoder(nn.Module):
 
 
 class Worker(nn.Module):
-    def __init__(self, voc_size, d_worker_state, d_context, d_goal, d_word_embedding) -> None:
+    def __init__(self, voc_size, d_worker_state, d_context, d_goal, d_word_embedding, name="worker") -> None:
         super(Worker, self).__init__()
-        self.attention = nn.MultiheadAttention
+        self.name = name
+        #self.attention = nn.MultiheadAttention
 
         self.worker_lstm = nn.LSTM(input_size=2*d_context + d_goal + d_word_embedding,
         batch_first=True, hidden_size=d_worker_state)
@@ -65,8 +71,7 @@ class Worker(nn.Module):
         self.projection_1 = nn.Linear(in_features=d_worker_state, out_features=d_worker_state)
         self.tanh = nn.Tanh()
         self.projection_2 = nn.Linear(in_features=d_worker_state, out_features=voc_size)
-
-
+        self.relu = nn.ReLU()
 
     def forward(self, goal, low_level_features, last_action):
         #context = self.context_atn(features, worker_hidden_state)
@@ -79,14 +84,16 @@ class Worker(nn.Module):
         x = self.tanh(x)
         x = self.projection_2(x)
 
+        #x = self.relu(x) TODO this fixxes the neg prob problem? why
         pi_t = self.softmax(x)
 
         return pi_t, (h_n, c_n)
 
 
 class Manager(nn.Module):
-    def __init__(self, d_features, d_worker_state, d_hidden, d_goal, device, exploration=True, noise_mean=0, noise_std=0.1) -> None:
+    def __init__(self, d_features, d_worker_state, d_hidden, d_goal, device, exploration=True, noise_mean=0, noise_std=0.1, name="manager") -> None:
         super(Manager, self).__init__()
+        self.name = name
         self.d_goal = d_goal
         self.exploration = exploration
         self.noise_mean = noise_mean
@@ -160,9 +167,9 @@ class Critic(nn.Module):
             return x
 
 class ContextAttention(nn.Module):
-    def __init__(self, hidden_state, hidden_agent_state) -> None:
+    def __init__(self, hidden_state, hidden_agent_state, name) -> None:
         super(ContextAttention, self).__init__()
-
+        self.name = name
         self.tanh = nn.Tanh()
         self.W = nn.Linear(2*hidden_state, 2*hidden_state)
         self.U = nn.Linear(hidden_agent_state,hidden_agent_state)
@@ -211,13 +218,13 @@ class HRLAgent(nn.Module):
 
         self.worker = Worker(voc_size=self.voc_size, d_worker_state=cfg.rl_worker_lstm, d_goal=self.d_goal, 
         d_word_embedding=cfg.d_model_caps, d_context=cfg.rl_low_level_enc_d,)
-        self.worker_baseline_estimator = BaselineEstimator(cfg.rl_worker_lstm, 1)
-        self.worker_context_atn = ContextAttention(cfg.rl_low_level_enc_d, cfg.rl_worker_lstm)
+        self.worker_baseline_estimator = BaselineEstimator(cfg.rl_worker_lstm, 1, "worker_baseline")
+        self.worker_context_atn = ContextAttention(cfg.rl_low_level_enc_d, cfg.rl_worker_lstm, "worker_context_atn")
 
         self.manager = Manager(d_features=cfg.rl_high_level_enc_d, d_worker_state=cfg.rl_worker_lstm,
         d_hidden=cfg.rl_manager_lstm, d_goal=cfg.rl_goal_d, device=self.device)
-        self.manager_baseline_estimator = BaselineEstimator(cfg.rl_manager_lstm, 1)
-        self.manager_context_atn = ContextAttention(cfg.rl_high_level_enc_d, cfg.rl_manager_lstm)
+        self.manager_baseline_estimator = BaselineEstimator(cfg.rl_manager_lstm, 1, "manager_baseline")
+        self.manager_context_atn = ContextAttention(cfg.rl_high_level_enc_d, cfg.rl_manager_lstm, "manager_context_atn")
 
         self.critic = Critic(embed_dim=cfg.d_model_caps)
         self.critic.load_state_dict(torch.load(cfg.rl_critic_path))
@@ -230,6 +237,43 @@ class HRLAgent(nn.Module):
 
         self.high_level_encoder = HighLevelEncoder(d_low_level_features=cfg.rl_low_level_enc_d,
         d_hidden_state=cfg.rl_high_level_enc_d)
+
+    def save_model(self, path):
+        #save worker - baseline estimator - context atn, manager baseline estimator - context atn, ll encoder, hl encoder
+        self.save_submodule(path, self.worker)
+        self.save_submodule(path, self.worker_baseline_estimator)
+        self.save_submodule(path, self.worker_context_atn)
+
+        self.save_submodule(path, self.manager)
+        self.save_submodule(path, self.manager_baseline_estimator)
+        self.save_submodule(path, self.manager_context_atn)
+
+        self.save_submodule(path, self.low_level_encoder)
+        self.save_submodule(path, self.high_level_encoder)
+
+    def save_submodule(self, path, module):
+        torch.save(module.state_dict(), f'{path}/{module.name}.cp')
+
+    def load_submodule(self, path, module):
+        file_path = f'{path}/{module.name}.cp'
+        if not os.path.exists(file_path):
+            print(f"Did not find checkpoint for {module.name}", file=sys.stderr)
+            return
+        module.load_state_dict(torch.load(file_path))
+
+    def load_model(self, path):
+        #save worker - baseline estimator - context atn, manager baseline estimator - context atn, ll encoder, hl encoder
+
+        self.load_submodule(path, self.worker)
+        self.load_submodule(path, self.worker_baseline_estimator)
+        self.load_submodule(path, self.worker_context_atn)
+
+        self.load_submodule(path, self.manager)
+        self.load_submodule(path, self.manager_baseline_estimator)
+        self.load_submodule(path, self.manager_context_atn)
+
+        self.load_submodule(path, self.low_level_encoder)
+        self.load_submodule(path, self.high_level_encoder)
 
     def set_inference_mode(self, inference):
         self.inference = inference
@@ -270,7 +314,7 @@ class HRLAgent(nn.Module):
         low_level_features, (l_h, l_c) = self.low_level_encoder(x)
         high_level_features, (h_h, h_c)  = self.high_level_encoder(low_level_features)
 
-        word_index = 0 
+        word_index = 1#Skip <s> token
         goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
         last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
         last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)
@@ -278,7 +322,7 @@ class HRLAgent(nn.Module):
         completion_mask = torch.zeros(B).bool().to(self.device)
 
         gt_embeddings = self.embedding(gts)
-        likelyhood = torch.zeros(size=(B,self.max_len)).to(self.device)
+        likelyhood = torch.zeros(size=(B,self.max_len+1)).to(self.device)#+1 for padding of start index
 
         segments = self.critic(gt_embeddings)
         segments_sm = torch.sigmoid(segments)
@@ -286,10 +330,10 @@ class HRLAgent(nn.Module):
 
         #TODO finish on full completion mask
         for i in range(self.max_len):
-            if i >= L or torch.all(completion_mask):
+            if i >= (L-1) or torch.all(completion_mask):
                 break
 
-            last_word = gt_embeddings[:,word_index,:]
+            last_word = gt_embeddings[:,word_index-1,:]
             desired_word_index = gts[:,word_index]
             worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
 
@@ -298,9 +342,9 @@ class HRLAgent(nn.Module):
 
             distribution = Categorical(next_word)
             #See how likely groudntruth would have occured
-            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()
+            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()#this will start with <s>
 
-            eos = desired_word_index == self.pad_index
+            eos = desired_word_index == self.end_index
             completion_mask = completion_mask | eos
 
             iteration_labels = segment_labels[:,word_index]

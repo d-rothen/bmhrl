@@ -6,7 +6,7 @@ from scripts.train_captioning_module import train_cap
 from scripts.train_rl_captioning_module import train_rl_cap
 from scripts.train_proposal_generator import train_prop
 from scripts.eval_on_learned_props import eval_on_learned_props
-from scripts.train_segmentation_module import train_seg
+from scripts.train_critic import train_critic
 
 def main(cfg):
     if cfg.procedure == 'train_cap':
@@ -17,8 +17,8 @@ def main(cfg):
         train_prop(cfg)
     elif cfg.procedure == 'evaluate':
         eval_on_learned_props(cfg)
-    elif cfg.procedure == 'train_seg':
-        train_seg(cfg)
+    elif cfg.procedure == 'train_critic':
+        train_critic(cfg)
     else:
         raise NotImplementedError
 
@@ -40,6 +40,11 @@ if __name__ == "__main__":
     parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
     parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.5, help='Required confidence to set a section')
     parser.add_argument('--rl_dropout', type=float, default=0.3, help='rl dropout')
+    parser.add_argument('--rl_model_dir', type=str, help="rl model save directory")
+
+    ## Critic
+
+    parser.add_argument('--train_csv_path', type=str, default='./data/Critic/critic_training.csv')
 
     ## DATA
     # paths to the precalculated train meta files
@@ -88,7 +93,7 @@ if __name__ == "__main__":
     parser.add_argument('--momentum', type=float, default=0.0)
     parser.add_argument('--scheduler', type=str, default='constant',
                         choices=['constant', 'reduce_on_plateau'], help='lr scheduler')
-    parser.add_argument('--lr', type=float, default=1e-2, help='lr (if scheduler is constant)')
+    parser.add_argument('--lr', type=float, default=1e-4, help='lr (if scheduler is constant)')
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--lr_patience', type=int, help='ReduceLROnPlateau arguments')
     parser.add_argument('--lr_reduce_factor', type=float,

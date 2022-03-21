@@ -17,6 +17,8 @@ from scripts.device import get_device
 from utilities.captioning_utils import average_metrics_in_two_dicts, timer
 from utilities.config_constructor import Config
 from model.hrl_agent import HRLAgent
+from pathlib import Path
+import sys
 
 def train_rl_cap(cfg):
     torch.backends.cudnn.benchmark = True    # doing our best to make it replicable
@@ -47,10 +49,6 @@ def train_rl_cap(cfg):
 
     model = HRLAgent(cfg=cfg, train_dataset=train_dataset)
     
-    #if cfg.pretrained_cap_model_path is not None:
-    #    cap_model_cpt = torch.load(cfg.pretrained_cap_model_path, map_location='cpu')
-    #    model.load_state_dict(cap_model_cpt['model_state_dict'])
-    
     #TODO Criterion
     #criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
     
@@ -74,6 +72,8 @@ def train_rl_cap(cfg):
     if torch.cuda.is_available:
         print("Num dev " + str(torch.cuda.device_count()))
         model = torch.nn.DataParallel(model, cfg.device_ids)
+    
+    model.module.load_model(f'{cfg.rl_model_dir}/baseline')
 
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total Number of Trainable Parameters: {param_num / 1000000} Mil.')
@@ -93,13 +93,11 @@ def train_rl_cap(cfg):
 
     out_file = "rl.out"
 
+    is_warmstart = True
+
 
     for epoch in range(cfg.epoch_num):
 
-        val_1_metrics = validation_1by1_loop(
-            cfg, model, val_1_loader, inference, epoch, TBoard
-        )
-        
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
         print(f'Started @ {cfg.curr_time}; Current timer: {timer(cfg.curr_time)}')
@@ -111,10 +109,22 @@ def train_rl_cap(cfg):
         # train
         #training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
 
-        if epoch == -1:
-            print("Warmstarting HRL agent")
+        ############# Test
+
+        #model.module.set_inference_mode(True)
+        # validation (next word)
+        #val_1_loss = validation_next_word_loop(
+        #    cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
+        #)
+        #model.module.set_inference_mode(False)
+        ###########
+
+
+        if is_warmstart:#0:
+            print("Warmstarting HRL agent", file=sys.stderr)
             warmstart(cfg, model, train_loader, optimizer, epoch, TBoard)#TODO does it work here?
         else:
+            #TODO log here for error?
             rl_training_loop(cfg, model, train_loader, optimizer, epoch, TBoard)
         model.module.set_inference_mode(True)
         # validation (next word)
@@ -132,7 +142,7 @@ def train_rl_cap(cfg):
             scheduler.step(val_avg_loss)
 
         # validation (1-by-1 word)
-        if epoch >= cfg.one_by_one_starts_at:
+        if epoch >= cfg.one_by_one_starts_at or is_warmstart:
             # validation with g.t. proposals
             val_1_metrics = validation_1by1_loop(
                 cfg, model, val_1_loader, inference, epoch, TBoard
@@ -156,13 +166,18 @@ def train_rl_cap(cfg):
                 if best_metric < metrics_avg['METEOR']:
                     best_metric = metrics_avg['METEOR']
                     
-                    save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
-                               val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
+                    model_path = f'{cfg.rl_model_dir}/{str(epoch)}'
+                    Path(model_path).mkdir(exist_ok=True)
+                    model.module.save_model(model_path)# TODO
+                    #save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
+                    #           val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
                     # reset the early stopping criterion
                     num_epoch_best_metric_unchanged = 0
                 else:
                     num_epoch_best_metric_unchanged += 1
         model.module.set_inference_mode(False)
+
+        is_warmstart = epoch <= 2 #TODO just for testing metrics
 
 
 

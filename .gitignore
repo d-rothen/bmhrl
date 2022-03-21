@@ -12,3 +12,10 @@ tmp
 .vector_cache_old/
 data/
 .vector_cache_old/glove.840B.300d.txt
+slurm_dbg/code-server-gpu1.zip
+slurm_dbg/code-server-gpu1/.vsc_config
+slurm_dbg/code-server-gpu1/start_vscode.sh
+slurm_dbg/code-server-gpu1/reconnect.sh
+slurm_dbg/code-server-gpu1/stop_vscode.sh
+slurm_dbg/code-server-gpu1/reconnect_info
+.vector_cache_2/
