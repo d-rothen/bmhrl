@@ -38,9 +38,13 @@ if __name__ == "__main__":
     parser.add_argument('--rl_goal_d', type=int, default=64, help='rl goal dimensions')
     parser.add_argument('--rl_attn_d', type=int, default=512, help='rl attention dimensions')
     parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
-    parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.5, help='Required confidence to set a section')
+    parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.25, help='critic threshhold after softmax for labelling segments')
     parser.add_argument('--rl_dropout', type=float, default=0.3, help='rl dropout')
-    parser.add_argument('--rl_model_dir', type=str, help="rl model save directory")
+    parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
+    parser.add_argument('--rl_train_worker', type=bool, help="train worker or manager")
+    parser.add_argument('--rl_warmstart', type=bool, default=False, help="warmstart the agent")
+
+    
 
     ## Critic
 

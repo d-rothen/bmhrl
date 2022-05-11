@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from tqdm import tqdm
 import torch
 import spacy
@@ -105,6 +106,7 @@ def warmstart(cfg, model, loader, optimizer, epoch, TBoard):
         log_l[log_l != log_l] = 0#TODO trick to remove nans, that appeared by multiplying 0 times -inf (-inf from log operation on 0 values)
 
         loss = -torch.sum(log_l)
+        #print(f"CEL: {loss.numpy()}", file=sys.stderr)
         #loss = loss * 1e-2#* 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
         loss.backward()
 
@@ -114,13 +116,68 @@ def warmstart(cfg, model, loader, optimizer, epoch, TBoard):
             #break
         #manager_losses.mean().backward()
 
-def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
+def rl_likelyhood(cfg, model, loader, optimizer, epoch, train_worker, TBoard):
+    model.train()#.cuda()
+    loader.dataset.update_iterator()
+    train_total_loss = 0
+    progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
+
+    if train_worker:
+        model.module.set_freeze_manager(True)
+        model.module.set_freeze_worker(False)
+    else:
+        model.module.set_freeze_manager(False)
+        model.module.set_freeze_worker(True)
+
+    for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
+        optimizer.zero_grad()
+        #caption_idx = batch['caption_data'].caption 
+        #caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
+        #masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)#video and audio feature vectors are 1024/128 1es for "non processed" video/audio -> create bool mask
+
+        src = batch['feature_stacks']
+
+        video_features = src['rgb'] + src['flow']
+        likelihood, worker_weight, worker_baseline_loss, manager_weight, manager_baseline_loss = model.module.forward_likelyhood(video_features, batch['caption_data'].caption, batch['captions'], train_worker)
+
+        loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding
+        B,L = loss_mask.shape
+
+
+        log_l = torch.log(likelihood)
+        _,Ll = log_l.shape
+        zero_padding = Ll - L
+        padded_loss_mask = torch.nn.functional.pad(loss_mask, (0,zero_padding,0,0), value=0)
+        
+        if train_worker:
+            log_l = log_l * worker_weight
+
+            log_l = (log_l * padded_loss_mask)[:,1:]#Also get rid of <s> prob
+            log_l[log_l != log_l] = 0#TODO trick to remove nans, that appeared by multiplying 0 times -inf (-inf from log operation on 0 values)
+
+            loss = -torch.sum(log_l)
+            #loss = loss * 1e-2#* 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
+
+
+            worker_baseline_loss.mean().backward(retain_graph=True)
+            model.module.set_freeze_worker_baseline(True)
+            loss.backward()
+            model.module.set_freeze_worker_baseline(False)
+        else:
+            pass
+
+
+        optimizer.step()
+
+        #if i > 100:
+            #break
+        #manager_losses.mean().backward()
+
+def rl_training_loop(cfg, model, loader, optimizer, epoch, train_worker, TBoard):
     model.train()#.cuda()
     train_total_loss = 0
     loader.dataset.update_iterator()
     progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
-
-    train_worker = True
 
     if train_worker:
         model.module.set_freeze_manager(True)
@@ -140,7 +197,7 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
         video_features = src['rgb'] + src['flow']
         iteration = model(video_features, masks['V_mask'], batch['captions'], train_worker)
 
-        if train_worker:
+        if train_worker:##TODO Order relevant? Also does Critic work correctly with vector_cache?
             iteration['worker_baseline_loss'].mean().backward(retain_graph=True)#TODO check cutoffs
             
             model.module.set_freeze_worker_baseline(True)
@@ -150,14 +207,15 @@ def rl_training_loop(cfg, model, loader, optimizer, epoch, TBoard):
             
             #print(worker_loss)
         else:
+            iteration['manager_baseline_loss'].mean().backward(retain_graph=True)#TODO check cutoffs
+            
+            model.module.set_freeze_manager_baseline(True)
             manager_loss = iteration["manager_loss"].mean()
             manager_loss.backward()
-            iteration['manager_baseline_loss'].mean().backward()#TODO check cutoffs
-            print(manager_loss)
+            model.module.set_freeze_manager_baseline(False)
 
         optimizer.step()
         #manager_losses.mean().backward()
-
 
 def training_loop_rl(cfg, model, loader, criterion, optimizer, epoch, TBoard):
     model.train()#.cuda()

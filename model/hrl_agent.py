@@ -258,22 +258,26 @@ class HRLAgent(nn.Module):
         file_path = f'{path}/{module.name}.cp'
         if not os.path.exists(file_path):
             print(f"Did not find checkpoint for {module.name}", file=sys.stderr)
-            return
+            return False
         module.load_state_dict(torch.load(file_path))
+        return True
 
     def load_model(self, path):
         #save worker - baseline estimator - context atn, manager baseline estimator - context atn, ll encoder, hl encoder
+        loaded_model = False
 
-        self.load_submodule(path, self.worker)
-        self.load_submodule(path, self.worker_baseline_estimator)
-        self.load_submodule(path, self.worker_context_atn)
+        loaded_model = loaded_model or self.load_submodule(path, self.worker)
+        loaded_model = loaded_model or self.load_submodule(path, self.worker_baseline_estimator)
+        loaded_model = loaded_model or self.load_submodule(path, self.worker_context_atn)
 
-        self.load_submodule(path, self.manager)
-        self.load_submodule(path, self.manager_baseline_estimator)
-        self.load_submodule(path, self.manager_context_atn)
+        loaded_model = loaded_model or self.load_submodule(path, self.manager)
+        loaded_model = loaded_model or self.load_submodule(path, self.manager_baseline_estimator)
+        loaded_model = loaded_model or self.load_submodule(path, self.manager_context_atn)
 
-        self.load_submodule(path, self.low_level_encoder)
-        self.load_submodule(path, self.high_level_encoder)
+        loaded_model = loaded_model or self.load_submodule(path, self.low_level_encoder)
+        loaded_model = loaded_model or self.load_submodule(path, self.high_level_encoder)
+
+        return loaded_model
 
     def set_inference_mode(self, inference):
         self.inference = inference
@@ -364,6 +368,79 @@ class HRLAgent(nn.Module):
             word_index += 1
         return likelyhood
 
+    def forward_likelyhood(self, x, gts, caption_data, train_worker):
+        # x = (B, L, 1024)
+        B,L = gts.shape
+        if not self.inference:
+            score = MeteorScore(self.device, self.vocab, caption_data)
+
+        low_level_features, (l_h, l_c) = self.low_level_encoder(x)
+        high_level_features, (h_h, h_c)  = self.high_level_encoder(low_level_features)
+
+        word_index = 1#Skip <s> token
+        goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
+        last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
+        last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)
+
+        completion_mask = torch.zeros(B).bool().to(self.device)
+
+        gt_embeddings = self.embedding(gts)
+        likelyhood = torch.zeros(size=(B,self.max_len+1)).to(self.device)#+1 for padding of start index
+        worker_weights = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+        manager_weights = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+
+
+        worker_baseline_losses = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+        manager_baseline_losses = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+
+
+        segments = self.critic(gt_embeddings)
+        segments_sm = torch.sigmoid(segments)
+        segment_labels = (segments_sm > self.critic_score_threshhold).squeeze().int()
+
+        #TODO finish on full completion mask
+        for i in range(self.max_len):
+            if i >= (L-1) or torch.all(completion_mask):
+                break
+
+            last_word = gt_embeddings[:,word_index-1,:]
+            desired_word_index = gts[:,word_index]
+            worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
+
+            next_word, (w_h, w_c) = self.worker(goal, worker_ctx, last_word)
+
+            distribution = Categorical(next_word)
+            action = distribution.sample()
+            #See how likely groudntruth would have occured
+            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()#this will start with <s>
+
+            eos = desired_word_index == self.end_index
+            completion_mask = completion_mask | eos
+
+            iteration_labels = segment_labels[:,word_index]
+
+            persistent_goal_factor = (~iteration_labels.bool()).int().repeat(self.d_goal, 1).T.float()
+            new_goal_factor = iteration_labels.repeat(self.d_goal, 1).T.float()
+
+            persistent_goals = persistent_goal_factor * goal
+
+            manager_ctx = self.manager_context_atn(high_level_features, last_m_h)
+            next_goal, (m_h, m_c) = self.manager(manager_ctx, w_h.squeeze())#TODO critic and lastgoal
+
+            if not self.inference:
+                worker_score = score.delta_meteor_step(action)
+                worker_score_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+
+                worker_weights[:,word_index] = (worker_score - worker_score_baseline)
+                worker_baseline_losses[:, word_index] = (worker_score - worker_score_baseline)**2
+
+            last_w_h = w_h.squeeze()
+            last_m_h = m_h.squeeze()
+            goal = persistent_goals + new_goal_factor * next_goal.squeeze()
+            #Append next word(s)
+            word_index += 1
+        return likelyhood, worker_weights, worker_baseline_losses, manager_weights, manager_baseline_losses
+
     def forward(self, x, mask, gts, train_worker):
         # x = (B, L, 1024)
         B,L,_ = x.shape
@@ -381,6 +458,8 @@ class HRLAgent(nn.Module):
         goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
         last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
         last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)
+
+        likelyhood = torch.zeros(size=(B,self.max_len+1)).to(self.device)#+1 for padding of start index
         
         segments = torch.zeros(size=(B,1), dtype=torch.int32).to(self.device)
         worker_losses = torch.zeros(size=(B,self.max_len)).to(self.device)
@@ -390,7 +469,6 @@ class HRLAgent(nn.Module):
 
         completion_mask = torch.zeros(B).bool().to(self.device)
 
-        #TODO finish on full completion mask
         for i in range(self.max_len):
             if torch.all(completion_mask):
                 break
@@ -399,7 +477,6 @@ class HRLAgent(nn.Module):
             worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
 
             next_word, (w_h, w_c) = self.worker(goal, worker_ctx, last_word)
-            worker_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
 
             distribution = Categorical(next_word)
             action = distribution.sample()
@@ -427,7 +504,9 @@ class HRLAgent(nn.Module):
 
             if not self.inference:
                 word_score = score.delta_meteor_step(action)
-                worker_baseline_losses[:, word_index] = (word_score - worker_baseline)**2
+                worker_score_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+
+                worker_baseline_losses[:, word_index] = (word_score - worker_score_baseline)**2
                 #worker_loss = (word_score - worker_baseline) * distribution.log_prob(action) * (~eos).float()
                 worker_loss = word_score * distribution.log_prob(action) * (~eos).float()
                 worker_losses[:,word_index] = worker_loss

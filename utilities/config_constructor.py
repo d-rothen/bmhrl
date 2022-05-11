@@ -56,7 +56,9 @@ class Config(object):
             self.unfreeze_word_emb = args.unfreeze_word_emb
             self.model = args.model
             self.pretrained_prop_model_path = args.pretrained_prop_model_path
-            self.rl_model_dir = args.rl_model_dir
+            self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
+            self.rl_train_worker = args.rl_train_worker
+            self.rl_warmstart = args.rl_warmstart
 
         elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps
