@@ -181,7 +181,7 @@ def train_rl_cap(cfg):
                     num_epoch_best_metric_unchanged += 1
         model.module.set_inference_mode(False)
 
-        is_warmstart = is_warmstart and (epoch < 0) #TODO just for testing metrics
+        is_warmstart = is_warmstart and (epoch < (cfg.rl_warmstart_epochs - 1)) #TODO just for testing metrics
         alternate_training_switch = not alternate_training_switch
 
 

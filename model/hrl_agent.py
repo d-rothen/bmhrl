@@ -116,6 +116,8 @@ class Manager(nn.Module):
         x = self.projection_2(x) #g_t
 
         if self.exploration:
+            #TODO triggers Assertion `THCNumerics<T>::ge(val, zero)` failed.
+            #TODO or other line https://discuss.pytorch.org/t/help-understand-cuda-error-device-side-assert-triggered/63777
             noise = torch.empty(self.d_goal).normal_(mean=self.noise_mean, std=self.noise_std).to(self.device)
             x = x + noise
 
@@ -411,6 +413,7 @@ class HRLAgent(nn.Module):
 
             distribution = Categorical(next_word)
             action = distribution.sample()
+            eos = action == self.pad_index
             #See how likely groudntruth would have occured
             likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()#this will start with <s>
 
@@ -429,10 +432,122 @@ class HRLAgent(nn.Module):
 
             if not self.inference:
                 worker_score = score.delta_meteor_step(action)
-                worker_score_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+                #worker_score_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+                worker_weights[:,word_index] = worker_score * (~eos).float() #Disregard token after </s>
+                #worker_weights[:,word_index] = worker_score - worker_score_baseline
+                #worker_baseline_losses[:, word_index] = (worker_score - worker_score_baseline)**2
 
-                worker_weights[:,word_index] = (worker_score - worker_score_baseline)
-                worker_baseline_losses[:, word_index] = (worker_score - worker_score_baseline)**2
+                if True: #TODO manager methode
+                    segment_score = score.delta_meteor_section(iteration_labels)
+
+                    #manager_baseline = self.manager_baseline_estimator(m_h).squeeze()#TODO Cut gradient from manager from baseline
+                    #manager_baseline_losses[:, word_index] = (segment_score - manager_baseline)**2
+
+                    #Only regard reward sums if a segment ended here
+                    #TODO what if segments change (critic is LSTM!)
+                    #Pass only last segments for accumulation, then only reward segments that terminated this timestep
+                    cumw = iteration_labels.float() * self.cumulative_worker_reward(worker_losses[:,:word_index+1], segment_labels[:,:-1])
+                    manager_loss = -(segment_score - manager_baseline) * cumw
+                    manager_weights[:,word_index] = manager_loss
+
+            last_w_h = w_h.squeeze()
+            last_m_h = m_h.squeeze()
+            goal = persistent_goals + new_goal_factor * next_goal.squeeze()
+            #Append next word(s)
+            word_index += 1
+        return likelyhood, worker_weights, worker_baseline_losses, manager_weights, manager_baseline_losses
+
+    def forward_likelyhood_2(self, x, gts, caption_data, train_worker):
+        # x = (B, L, 1024)
+        B,L = gts.shape
+        if not self.inference:
+            score = MeteorScore(self.device, self.vocab, caption_data)
+
+        low_level_features, (l_h, l_c) = self.low_level_encoder(x)
+        high_level_features, (h_h, h_c)  = self.high_level_encoder(low_level_features)
+
+        start_index = torch.Tensor.repeat(self.start_index, B).to(self.device)
+        caption = torch.unsqueeze(self.embedding(start_index), 1).to(self.device)
+        actions = torch.unsqueeze(start_index, 1).to(self.device)
+
+        word_index = 1#Skip <s> token
+        goal = torch.zeros(size=(B,self.d_goal)).to(self.device)
+        last_w_h = torch.zeros(size=(B,self.d_w_h)).to(self.device)
+        last_m_h = torch.zeros(size=(B,self.d_m_h)).to(self.device)
+
+        completion_mask = torch.zeros(B).bool().to(self.device)
+
+        gt_embeddings = self.embedding(gts)
+        likelyhood = torch.zeros(size=(B,self.max_len+1)).to(self.device)#+1 for padding of start index
+        worker_weights = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+        manager_weights = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+
+
+        worker_baseline_losses = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+        manager_baseline_losses = torch.zeros(size=(B,self.max_len+1)).to(self.device)
+
+
+        segments = torch.zeros(size=(B,1), dtype=torch.int32).to(self.device)
+
+
+        #TODO finish on full completion mask
+        for i in range(self.max_len):
+            if i >= (L-1) or torch.all(completion_mask):
+                break
+
+            last_word = gt_embeddings[:,word_index-1,:]
+            desired_word_index = gts[:,word_index]
+            worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
+
+            next_word, (w_h, w_c) = self.worker(goal, worker_ctx, last_word)
+
+            distribution = Categorical(next_word)
+            action = distribution.sample()
+            eos = action == self.pad_index
+            #See how likely groudntruth would have occured
+            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()#this will start with <s>
+
+            eos = desired_word_index == self.end_index
+            completion_mask = completion_mask | eos
+
+            embedded_words = self.embedding(action)
+            caption = torch.cat([caption, torch.unsqueeze(embedded_words, 1)], 1)
+            actions = torch.cat([actions, torch.unsqueeze(action, 1)], 1)
+
+            new_segments = self.critic(caption)
+            segment_sm = torch.sigmoid(new_segments)
+            segment_labels = (segment_sm > self.critic_score_threshhold).squeeze().int()
+            #segments = torch.cat([segments, torch.unsqueeze(segment_labels, 1)], 1)
+
+            iteration_labels = segment_labels[:,-1]
+
+            persistent_goal_factor = (~iteration_labels.bool()).int().repeat(self.d_goal, 1).T.float()
+            new_goal_factor = iteration_labels.repeat(self.d_goal, 1).T.float()
+
+            persistent_goals = persistent_goal_factor * goal
+
+            manager_ctx = self.manager_context_atn(high_level_features, last_m_h)
+            next_goal, (m_h, m_c) = self.manager(manager_ctx, w_h.squeeze())#TODO critic and lastgoal
+
+            if not self.inference:
+                worker_score = score.delta_meteor_step(action)
+                #worker_score_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
+                worker_weights[:,word_index] = worker_score * (~eos).float() #Disregard token after </s>
+                #worker_weights[:,word_index] = worker_score - worker_score_baseline
+                #worker_baseline_losses[:, word_index] = (worker_score - worker_score_baseline)**2
+
+                if True: #TODO manager methode
+                    segment_score = score.delta_meteor_section(iteration_labels)
+
+                    #manager_baseline = self.manager_baseline_estimator(m_h).squeeze()#TODO Cut gradient from manager from baseline
+                    #manager_baseline_losses[:, word_index] = (segment_score - manager_baseline)**2
+
+                    #Only regard reward sums if a segment ended here
+                    #TODO what if segments change (critic is LSTM!)
+                    #Pass only last segments for accumulation, then only reward segments that terminated this timestep
+                    cumw = iteration_labels.float() * self.cumulative_worker_reward(worker_weights[:,:word_index+1], segment_labels[:,:-1])
+                    manager_loss = -(segment_score) * cumw#TODO minus baseline
+                    manager_weights[:,word_index] = manager_loss
 
             last_w_h = w_h.squeeze()
             last_m_h = m_h.squeeze()

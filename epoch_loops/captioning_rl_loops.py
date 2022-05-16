@@ -138,9 +138,9 @@ def rl_likelyhood(cfg, model, loader, optimizer, epoch, train_worker, TBoard):
         src = batch['feature_stacks']
 
         video_features = src['rgb'] + src['flow']
-        likelihood, worker_weight, worker_baseline_loss, manager_weight, manager_baseline_loss = model.module.forward_likelyhood(video_features, batch['caption_data'].caption, batch['captions'], train_worker)
+        likelihood, worker_weight, worker_baseline_loss, manager_weight, manager_baseline_loss = model.module.forward_likelyhood_2(video_features, batch['caption_data'].caption, batch['captions'], train_worker)
 
-        loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding
+        loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding, Also tradeoff: use GT losses or use computed eos for mask generation
         B,L = loss_mask.shape
 
 
@@ -159,13 +159,16 @@ def rl_likelyhood(cfg, model, loader, optimizer, epoch, train_worker, TBoard):
             #loss = loss * 1e-2#* 1e-3#TODO control lr from calling function - here just squeeze the loss a bit to account for high lr
 
 
-            worker_baseline_loss.mean().backward(retain_graph=True)
-            model.module.set_freeze_worker_baseline(True)
+            #worker_baseline_loss.mean().backward(retain_graph=True)
+            #model.module.set_freeze_worker_baseline(True)
             loss.backward()
-            model.module.set_freeze_worker_baseline(False)
+            #model.module.set_freeze_worker_baseline(False)
         else:
-            pass
-
+            log_l = log_l * manager_weight
+            log_l = (log_l * padded_loss_mask)[:,1:]
+            log_l[log_l != log_l] = 0
+            loss = -torch.sum(log_l)
+            loss.backward()
 
         optimizer.step()
 

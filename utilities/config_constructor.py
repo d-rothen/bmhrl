@@ -59,6 +59,7 @@ class Config(object):
             self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
             self.rl_train_worker = args.rl_train_worker
             self.rl_warmstart = args.rl_warmstart
+            self.rl_warmstart_epochs = args.rl_warmstart_epochs
 
         elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps

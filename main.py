@@ -43,6 +43,7 @@ if __name__ == "__main__":
     parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
     parser.add_argument('--rl_train_worker', type=bool, help="train worker or manager")
     parser.add_argument('--rl_warmstart', type=bool, default=False, help="warmstart the agent")
+    parser.add_argument('--rl_warmstart_epochs', type=int, default=1, help="Epochs trained via wamrstart before starting the agent")
 
     
 
