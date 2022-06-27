@@ -3,9 +3,12 @@ import numpy as np
 import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
+from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl, warmstart_bmhrl, warmstart_bmhrl_2
+from loss.rl_label_smoothing import RlLabelSmoothing
+from model.bm_hrl_agent import BMHrlAgent
 from utilities.out_log import print_to_file as print_log
 
-from datasets.captioning_dataset import ActivityNetCaptionsDataset
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import (save_model,
                                                 training_loop, training_loop_incremental,
                                                 validation_1by1_loop)
@@ -48,10 +51,12 @@ def train_rl_cap(cfg):
     val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
 
 
-    model = HRLAgent(cfg=cfg, train_dataset=train_dataset)
+    #model = HRLAgent(cfg=cfg, vocabulary=train_dataset.train_vocab)
+    model = BMHrlAgent(cfg, train_dataset)
     
     #TODO Criterion
-    #criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
+    validation_criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
+    criterion = RlLabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
     
     #if cfg.optimizer == 'adam':
     #    optimizer = torch.optim.Adam(model.parameters(), cfg.lr, (cfg.beta1, cfg.beta2), cfg.eps,
@@ -92,16 +97,15 @@ def train_rl_cap(cfg):
     # "early stopping" thing
     num_epoch_best_metric_unchanged = 0
 
-    criterion = False
+    is_warmstart = cfg.rl_warmstart_epochs > 0
 
-    out_file = "rl.out"
+    alternate_training_switch = False#Start with Manager
+    
+    learning_rate_validation = False
 
-    is_warmstart = cfg.rl_warmstart
-
-    alternate_training_switch = True
+    #bmhrl_test(cfg, model, train_loader)
 
     for epoch in range(cfg.epoch_num):
-
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
         print(f'Started @ {cfg.curr_time}; Current timer: {timer(cfg.curr_time)}')
@@ -126,33 +130,44 @@ def train_rl_cap(cfg):
 
         if is_warmstart:#0:
             print(f"Warmstarting HRL agent #{str(epoch)}", file=sys.stderr)
-            warmstart(cfg, model, train_loader, optimizer, epoch, TBoard)#TODO does it work here?
+            warmstart_bmhrl_2(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
         else:
             #TODO log here for error?
-            rl_likelyhood(cfg, model, train_loader, optimizer, epoch, alternate_training_switch, TBoard)
-        model.module.set_inference_mode(True)
-        # validation (next word)
-        val_1_loss = validation_next_word_loop(
-            cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
-        )
-        val_2_loss = validation_next_word_loop(
-            cfg, model, val_2_loader, inference, meteor_2_criterion, epoch, TBoard, exp_name
-        )
-        val_avg_loss = (val_1_loss + val_2_loss) / 2
+            #rl_likelyhood(cfg, model, train_loader, optimizer, epoch, alternate_training_switch, TBoard)#TODO just train worker for now
+            train_bmhrl(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
 
-        print(f"Validation avg. Loss: {val_avg_loss}", file=sys.stderr)
+        #model.module.set_inference_mode(True)
+        
+        
+        # VALIDATIO?N FOR LEARNING RATE SCHEDULER ------------------------
+        
+        if learning_rate_validation:
+        #val_1_loss = bmhrl_validation_next_word_loop(
+        #    cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
+        #)
+            val_1_loss = bmhrl_validation_next_word_loop(
+                cfg, model, val_1_loader, inference, validation_criterion, epoch, TBoard, exp_name
+            )
+            val_2_loss = bmhrl_validation_next_word_loop(
+                cfg, model, val_2_loader, inference, validation_criterion, epoch, TBoard, exp_name
+            )
+            val_avg_loss = (val_1_loss + val_2_loss) / 2
 
-        if scheduler is not None:
-            scheduler.step(val_avg_loss)
+            print(f"Validation avg. Loss: {val_avg_loss}", file=sys.stderr)
+
+            if scheduler is not None:
+                scheduler.step(val_avg_loss)
+
+        #-------------------------------------------------------------------
 
         # validation (1-by-1 word)
         if epoch >= cfg.one_by_one_starts_at or is_warmstart:
             # validation with g.t. proposals
             val_1_metrics = validation_1by1_loop(
-                cfg, model, val_1_loader, inference, epoch, TBoard
+                cfg, model, val_1_loader, bmhrl_inference, epoch, TBoard
             )
             val_2_metrics = validation_1by1_loop(
-                cfg, model, val_2_loader, inference, epoch, TBoard
+                cfg, model, val_2_loader, bmhrl_inference, epoch, TBoard
             )
 
             if cfg.to_log:
@@ -179,7 +194,7 @@ def train_rl_cap(cfg):
                     num_epoch_best_metric_unchanged = 0
                 else:
                     num_epoch_best_metric_unchanged += 1
-        model.module.set_inference_mode(False)
+        #model.module.set_inference_mode(False)
 
         is_warmstart = is_warmstart and (epoch < (cfg.rl_warmstart_epochs - 1)) #TODO just for testing metrics
         alternate_training_switch = not alternate_training_switch

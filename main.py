@@ -7,6 +7,7 @@ from scripts.train_rl_captioning_module import train_rl_cap
 from scripts.train_proposal_generator import train_prop
 from scripts.eval_on_learned_props import eval_on_learned_props
 from scripts.train_critic import train_critic
+from sample.critic_test import run_critic_test
 
 def main(cfg):
     if cfg.procedure == 'train_cap':
@@ -19,6 +20,8 @@ def main(cfg):
         eval_on_learned_props(cfg)
     elif cfg.procedure == 'train_critic':
         train_critic(cfg)
+    elif cfg.procedure == 'test_critic':
+        run_critic_test(cfg)
     else:
         raise NotImplementedError
 
@@ -39,13 +42,25 @@ if __name__ == "__main__":
     parser.add_argument('--rl_attn_d', type=int, default=512, help='rl attention dimensions')
     parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
     parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.25, help='critic threshhold after softmax for labelling segments')
-    parser.add_argument('--rl_dropout', type=float, default=0.3, help='rl dropout')
+    parser.add_argument('--rl_dropout', type=float, default=0.1, help='rl dropout')
+    parser.add_argument('--rl_gamma_worker', type=float, default=0.9, help='reward diminishing constant')
+    parser.add_argument('--rl_gamma_manager', type=float, default=0.9, help='reward diminishing constant')
     parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
     parser.add_argument('--rl_train_worker', type=bool, help="train worker or manager")
-    parser.add_argument('--rl_warmstart', type=bool, default=False, help="warmstart the agent")
     parser.add_argument('--rl_warmstart_epochs', type=int, default=1, help="Epochs trained via wamrstart before starting the agent")
-
+    parser.add_argument('--rl_projection_d', type=int, default=512, help='dimension for common projection space')
+    parser.add_argument('--rl_att_heads', type=int, default=4, help='#attention heads')
+    parser.add_argument('--rl_att_layers', type=int, default=1, help='#attention layers')
     
+    parser.add_argument('--rl_reward_weight', type=int, default=1, help='weighting rewards additionally')
+    
+
+    #Feed Forward intermediate dims
+    parser.add_argument('--rl_ff_c', type=int, default=2048, help='caption FF Layer dim')
+    parser.add_argument('--rl_ff_v', type=int, default=1024, help='video FF Layer dim')
+    parser.add_argument('--rl_ff_a', type=int, default=512, help='audio FF Layer dim')
+
+
 
     ## Critic
 
@@ -84,7 +99,7 @@ if __name__ == "__main__":
 
     ## TRAINING
     parser.add_argument('--procedure', type=str, required=True, 
-                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg'])
+                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg', 'test_critic'])
     parser.add_argument('--device_ids', type=int, nargs='+', default=[0], help='separated by a whitespace')
     parser.add_argument('--start_token', type=str, default='<s>', help='starting token')
     parser.add_argument('--end_token', type=str, default='</s>', help='ending token')

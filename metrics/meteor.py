@@ -50,9 +50,10 @@ class MeteorScore():
     def delta_meteor_section(self, section_mask):
         for b in range(self.B):
             last_score = np.array(self.section_scores[b])[-1]#TODO efficient
-            score = meteor_score([self.gts[b]], self.hypos[b]) - last_score
 
+            #TODO Check in DEBUG
             if section_mask[b]:
+                score = meteor_score([self.gts[b]], self.hypos[b]) - last_score
                 self.section_scores[b].append(score)
             else:
                 self.section_scores[b].append(last_score)

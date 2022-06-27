@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from datasets.captioning_dataset import ActivityNetCaptionsDataset
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import greedy_decoder, validation_1by1_loop
 from model.captioning_module import BiModalTransformer, Transformer
 

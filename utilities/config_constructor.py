@@ -38,7 +38,7 @@ class Config(object):
         #rl agent
 
         #--
-        if args.procedure == 'train_rl_cap':
+        if args.procedure == 'train_rl_cap' or args.procedure == 'test_critic':
             self.rl_low_level_enc_d = args.rl_low_level_enc_d
             self.rl_high_level_enc_d = args.rl_high_level_enc_d
 
@@ -58,8 +58,19 @@ class Config(object):
             self.pretrained_prop_model_path = args.pretrained_prop_model_path
             self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
             self.rl_train_worker = args.rl_train_worker
-            self.rl_warmstart = args.rl_warmstart
             self.rl_warmstart_epochs = args.rl_warmstart_epochs
+            self.rl_projection_d = args.rl_projection_d
+
+            self.rl_gamma_worker = args.rl_gamma_worker
+            self.rl_gamma_manager = args.rl_gamma_manager
+            self.rl_reward_weight = args.rl_reward_weight
+
+            self.rl_att_layers = args.rl_att_layers
+            self.rl_att_heads = args.rl_att_heads
+
+            self.rl_ff_c = args.rl_ff_c
+            self.rl_ff_v = args.rl_ff_v
+            self.rl_ff_a = args.rl_ff_a
 
         elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps

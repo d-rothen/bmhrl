@@ -4,7 +4,7 @@ import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
 
-from datasets.captioning_dataset import ActivityNetCaptionsDataset
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import (greedy_decoder, save_model,
                                                 training_loop, training_loop_incremental,
                                                 validation_1by1_loop,

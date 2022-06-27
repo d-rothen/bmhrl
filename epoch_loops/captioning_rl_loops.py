@@ -9,7 +9,7 @@ from time import time
 
 from model.masking import mask
 from evaluation.evaluate import ANETcaptions
-from datasets.load_features import load_features_from_npy
+from captioning_datasets.load_features import load_features_from_npy
 from scripts.device import get_device
 from utilities.captioning_utils import HiddenPrints, get_lr
 
@@ -73,7 +73,7 @@ def greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, 
 
 def inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality, captions):
     video_features = feature_stacks['rgb'] + feature_stacks['flow']
-    iteration = model(video_features, 0, captions, False)
+    iteration = model.module.inference(video_features)
     return iteration['actions']#TODO or return embedddings?
 
 
@@ -138,7 +138,7 @@ def rl_likelyhood(cfg, model, loader, optimizer, epoch, train_worker, TBoard):
         src = batch['feature_stacks']
 
         video_features = src['rgb'] + src['flow']
-        likelihood, worker_weight, worker_baseline_loss, manager_weight, manager_baseline_loss = model.module.forward_likelyhood_2(video_features, batch['caption_data'].caption, batch['captions'], train_worker)
+        likelihood, worker_weight, worker_baseline_loss, manager_weight, manager_baseline_loss = model(video_features, batch['caption_data'].caption, batch['captions'])
 
         loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding, Also tradeoff: use GT losses or use computed eos for mask generation
         B,L = loss_mask.shape
@@ -266,7 +266,7 @@ def validation_next_word_loop(cfg, model, loader, decoder, criterion, epoch, TBo
         masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)
 
         with torch.no_grad():
-            pred = model(video_features, masks['V_mask'], batch['captions'],  False)
+            pred = model.module.inference(video_features)
             predicted_caption = pred["actions"]
             #n_tokens = (caption_idx_y != loader.dataset.pad_idx).sum()
             loss = criterion(batch['captions'], predicted_caption)

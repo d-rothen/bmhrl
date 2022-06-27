@@ -4,8 +4,8 @@ from torch.utils import tensorboard as tensorboard
 import torch
 from torch.utils.data import DataLoader
 
-from datasets.captioning_dataset import ActivityNetCaptionsDataset
-from datasets.proposal_dataset import ProposalGenerationDataset
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
+from captioning_datasets.proposal_dataset import ProposalGenerationDataset
 from epoch_loops.proposal_epoch_loops import train_loop, train_av_loop, validation_loop
 from model.proposal_generator import MultimodalProposalGenerator, ProposalGenerator
 from utilities.proposal_utils import calc_anchors_using_kmeans

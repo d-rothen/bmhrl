@@ -7,9 +7,9 @@ import numpy as np
 import torch
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from datasets.captioning_dataset import ActivityNetCaptionsDataset
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 # from datasets.load_features import load_features_from_npy
-from datasets.load_features import crop_a_segment, pad_segment
+from captioning_datasets.load_features import crop_a_segment, pad_segment
 from epoch_loops.captioning_epoch_loops import make_masks
 from model.captioning_module import BiModalTransformer
 from model.proposal_generator import MultimodalProposalGenerator

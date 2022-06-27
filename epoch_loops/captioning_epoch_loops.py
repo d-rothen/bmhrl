@@ -7,7 +7,7 @@ from time import time
 
 from model.masking import mask
 from evaluation.evaluate import ANETcaptions
-from datasets.load_features import load_features_from_npy
+from captioning_datasets.load_features import load_features_from_npy
 from scripts.device import get_device
 from utilities.captioning_utils import HiddenPrints, get_lr
 
@@ -286,7 +286,7 @@ def validation_1by1_loop(cfg, model, loader, decoder, epoch, TBoard):
         # caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
         ### PREDICT TOKENS ONE-BY-ONE AND TRANSFORM THEM INTO STRINGS TO FORM A SENTENCE
         ints_stack = decoder(
-            model, batch['feature_stacks'], cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, batch["captions"]
+            model, batch['feature_stacks'], cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, batch["captions"], batch
         )
         ints_stack = ints_stack.cpu().numpy()  # what happens here if I use only cpu?
         # transform integers into strings
