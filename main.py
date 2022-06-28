@@ -50,10 +50,10 @@ if __name__ == "__main__":
     parser.add_argument('--rl_warmstart_epochs', type=int, default=1, help="Epochs trained via wamrstart before starting the agent")
     parser.add_argument('--rl_projection_d', type=int, default=512, help='dimension for common projection space')
     parser.add_argument('--rl_att_heads', type=int, default=4, help='#attention heads')
-    parser.add_argument('--rl_att_layers', type=int, default=1, help='#attention layers')
+    parser.add_argument('--rl_att_layers', type=int, default=2, help='#attention layers')
     
-    parser.add_argument('--rl_reward_weight', type=int, default=1, help='weighting rewards additionally')
-    
+    parser.add_argument('--rl_reward_weight_worker', type=int, default=1, help='weighting rewards additionally')
+    parser.add_argument('--rl_reward_weight_manager', type=int, default=2, help='weighting rewards additionally')
 
     #Feed Forward intermediate dims
     parser.add_argument('--rl_ff_c', type=int, default=2048, help='caption FF Layer dim')

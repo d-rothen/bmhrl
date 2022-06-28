@@ -14,5 +14,4 @@
 #SBATCH -o train_debug.out
 #SBATCH -J mdvc-train
 
-python -m debugpy --wait-for-client --listen 5999 main.py --procedure train_rl_cap --rl_warmstart_epochs 0 --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/ \
-    --pretrained_cap_model_path /home/rothenda/BMT/log/train_cap/baseline/best_cap_model.pt
+python -m debugpy --wait-for-client --listen 5999 main.py --procedure train_rl_cap --rl_pretrained_model_dir /home/rothenda/BMT/log/train_rl_cap/0628121951/checkpoints/E_7 --rl_warmstart_epochs 0 --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/

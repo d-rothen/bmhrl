@@ -1,3 +1,4 @@
+import sys
 from tqdm import tqdm
 import torch
 
@@ -21,6 +22,12 @@ def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx,
 
     return predicted_words[1]#Tuple -> return indices
 
+def test_print(msg):
+    print(msg, file=sys.stderr)
+
+def test_sentence(loader, prediction):
+    return " ".join([loader.dataset.train_vocab.itos[i] for i in prediction[0]])
+
 def bmhrl_test(cfg, model, loader):
     start_idx = loader.dataset.start_idx
     end_idx = loader.dataset.end_idx
@@ -32,7 +39,13 @@ def bmhrl_test(cfg, model, loader):
 
     for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
         src = batch['feature_stacks']
+
+        test_1 = bmhrl_inference(model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, None, batch)
+        test_print(f'With trg: {test_sentence(loader, test_1)}')
+
         synthesis = bmhrl_greedy_decoder(model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
+        test_print(f'Greedy Decoder: {test_sentence(loader, synthesis)}')
+        pass
 
 def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
     #assert model.training is False, 'call model.eval first'
@@ -56,7 +69,7 @@ def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad
         while (trg.size(-1) <= max_len) and (not completeness_mask.all()):
             masks = make_masks(feature_stacks, trg, modality, pad_idx)#TODO Like this we get a mask allowing the WHOLE image + audio sequence ?
             V, A = feature_stacks['rgb'] + feature_stacks['flow'], feature_stacks['audio']
-            preds = model((V,A), trg, masks)
+            preds = model.module.inference((V,A), trg, masks)
             next_word = preds[:, -1].max(dim=-1)[1].unsqueeze(1)
             trg = torch.cat([trg, next_word], dim=-1)
             completeness_mask = completeness_mask | torch.eq(next_word, end_idx).byte()
@@ -94,12 +107,34 @@ def bmhrl_validation_next_word_loop(cfg, model, loader, decoder, criterion, epoc
 
     return val_total_loss_norm
 
-def train_bmhrl(cfg, model, loader, optimizer, epoch, criterion, TBoard):
+def rl_loss(log_l, reward, mask):
+    B,L = mask.shape
+    log_l *= reward #TODO High reward -> good output -> should DISCOURAGE high loss?
+    _,Ll = log_l.shape
+    zero_padding = Ll - L
+    padded_loss_mask = torch.nn.functional.pad(mask, (0,zero_padding,0,0), value=0)
+    
+    log_l = (log_l * padded_loss_mask)[:,1:]#Also get rid of <s> prob
+    log_l[log_l != log_l] = 0#TODO trick to remove nans, that appeared by multiplying 0 times -inf (-inf from log operation on 0 values)
+
+    loss = -torch.sum(log_l)
+
+    return loss
+
+
+def train_bmhrl(cfg, model, loader, optimizer, epoch, criterion, TBoard, train_worker):
     model.train()#.cuda()
     loader.dataset.update_iterator()
     train_total_loss = 0
 
     sp = nn.Softplus(10)#TODO outsource
+
+    if train_worker:
+        model.module.teach_worker()
+        reward_weight = cfg.rl_reward_weight_worker
+    else:
+        model.module.teach_manager()
+        reward_weight = cfg.rl_reward_weight_manager
 
     progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
 
@@ -117,6 +152,8 @@ def train_bmhrl(cfg, model, loader, optimizer, epoch, criterion, TBoard):
 
         V, A = src['rgb'] + src['flow'], src['audio']
         prediction, reward = model((V,A), caption_idx, batch['captions'], masks)
+        
+        log_l = torch.gather(prediction, 2, torch.unsqueeze(caption_idx_y,-1)).squeeze()
 
         # ----------------old loss-------------------
         #n_tokens = (caption_idx_y != loader.dataset.pad_idx).sum()
@@ -126,18 +163,8 @@ def train_bmhrl(cfg, model, loader, optimizer, epoch, criterion, TBoard):
 
         # ------------temp loss--------------
         loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding
-        B,L = loss_mask.shape
-        log_l = prediction
-        reward_weight = sp(reward)
-        log_l *= reward_weight #TODO High reward -> good output -> should DISCOURAGE high loss?
-        _,Ll = log_l.shape
-        zero_padding = Ll - L
-        padded_loss_mask = torch.nn.functional.pad(loss_mask, (0,zero_padding,0,0), value=0)
-        
-        log_l = (log_l * padded_loss_mask)[:,1:]#Also get rid of <s> prob
-        log_l[log_l != log_l] = 0#TODO trick to remove nans, that appeared by multiplying 0 times -inf (-inf from log operation on 0 values)
-
-        loss = -torch.sum(log_l)
+        reward *= reward_weight
+        loss = rl_loss(log_l, reward, loss_mask)
         # -----------------------------------        
 
         #greedy_decoder(model, batch['feature_stacks'], 30, 2, 3, 1, 'audio_video')
@@ -218,12 +245,12 @@ def warmstart_bmhrl_2(cfg, model, loader, optimizer, epoch, criterion, TBoard):
 
         V, A = src['rgb'] + src['flow'], src['audio']
         prediction = model.module.warmstart((V,A), caption_idx, masks)
+                
+        log_l = torch.gather(prediction, 2, torch.unsqueeze(caption_idx_y,-1)).squeeze()
 
         loss_mask = (batch['caption_data'].caption != 1).float()#TODO use preset token for padding
         B,L = loss_mask.shape
 
-
-        log_l = prediction
         _,Ll = log_l.shape
         zero_padding = Ll - L
         padded_loss_mask = torch.nn.functional.pad(loss_mask, (0,zero_padding,0,0), value=0)

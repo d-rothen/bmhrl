@@ -63,7 +63,8 @@ class Config(object):
 
             self.rl_gamma_worker = args.rl_gamma_worker
             self.rl_gamma_manager = args.rl_gamma_manager
-            self.rl_reward_weight = args.rl_reward_weight
+            self.rl_reward_weight_worker = args.rl_reward_weight_worker
+            self.rl_reward_weight_manager = args.rl_reward_weight_manager
 
             self.rl_att_layers = args.rl_att_layers
             self.rl_att_heads = args.rl_att_heads

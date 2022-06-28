@@ -105,7 +105,10 @@ def train_rl_cap(cfg):
 
     #bmhrl_test(cfg, model, train_loader)
 
+    #bmhrl_test(cfg, model, train_loader)
+
     for epoch in range(cfg.epoch_num):
+
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
         print(f'Started @ {cfg.curr_time}; Current timer: {timer(cfg.curr_time)}')
@@ -160,8 +163,9 @@ def train_rl_cap(cfg):
 
         #-------------------------------------------------------------------
 
+
         # validation (1-by-1 word)
-        if epoch >= cfg.one_by_one_starts_at or is_warmstart:
+        if epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
             # validation with g.t. proposals
             val_1_metrics = validation_1by1_loop(
                 cfg, model, val_1_loader, bmhrl_inference, epoch, TBoard

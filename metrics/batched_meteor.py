@@ -43,7 +43,7 @@ class MeteorScorer():
     def delta_meteor_segment(self, delta_meteor_step_reward, sections, gamma_matrix):
         B,L = delta_meteor_step_reward.shape
 
-        segment_reward_queue, segment_reward_index = self.segment_reward_queue(delta_meteor_step_reward, sections)
+        segment_reward_queue, segment_reward_index = self.segment_reward_queue(delta_meteor_step_reward, sections).to(self.device)
         discounted_segment_reward = torch.einsum("bl,bsl->bs",segment_reward_queue, gamma_matrix)
 
         reward = torch.zeros(B,L)
@@ -55,7 +55,7 @@ class MeteorScorer():
         return reward
 
     def delta_meteor_step(self, pred, trg, mask, gamma_matrix):
-        meteor_diff = self._meteor_diff(pred, trg, mask)
+        meteor_diff = self._meteor_diff(pred, trg, mask).to(self.device)
 
         discounted_meteor = torch.einsum("bl,bsl->bs",meteor_diff, gamma_matrix)
         return discounted_meteor
@@ -65,9 +65,10 @@ class MeteorScorer():
         gamma_matrix = self.get_gamma_matrix(self.gamma, B, L)
 
         delta_meteor_step_reward = self.delta_meteor_step(pred, trg, mask, gamma_matrix)
+        delta_meteor_step_reward = delta_meteor_step_reward
 
         if sections is not None:
-            return delta_meteor_step_reward, self.delta_meteor_segment(delta_meteor_step_reward, sections, gamma_matrix)
+            return self.delta_meteor_segment(delta_meteor_step_reward, sections, gamma_matrix)
         return delta_meteor_step_reward
 
 
@@ -86,7 +87,7 @@ class MeteorScorer():
         gamma_exp = torch.arange(L, dtype=torch.float32).repeat((B,1))
         gamma_mat = gamma**gamma_exp
 
-        return self.expand_gamma(gamma_mat)
+        return self.expand_gamma(gamma_mat).to(self.device)
 
     def __init__(self, vocab, device, gamma_step, gamma_section) -> None:
         self.vocab = vocab
