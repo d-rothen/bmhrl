@@ -3,9 +3,11 @@ import numpy as np
 import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
-from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl, warmstart_bmhrl, warmstart_bmhrl_2
+from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl, train_bmhrl_bl, warmstart_bmhrl, warmstart_bmhrl_2, warmstart_bmhrl_bl
 from loss.rl_label_smoothing import RlLabelSmoothing
-from model.bm_hrl_agent import BMHrlAgent
+from metrics.batched_meteor import MeteorScorer
+from model.bm_hrl_agent import BMHrlAgent, BMManagerValueFunction, BMWorkerValueFunction
+from utilities.learning import adjust_optimizer_lr
 from utilities.out_log import print_to_file as print_log
 
 from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
@@ -53,19 +55,27 @@ def train_rl_cap(cfg):
 
     #model = HRLAgent(cfg=cfg, vocabulary=train_dataset.train_vocab)
     model = BMHrlAgent(cfg, train_dataset)
-    
-    #TODO Criterion
+    worker_value_model = BMWorkerValueFunction(cfg)
+    manager_value_model = BMManagerValueFunction(cfg)
+
+
     validation_criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
-    criterion = RlLabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
+    warmstart_criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
+
+    wv_criterion = torch.nn.MSELoss(reduction='none')
+    mv_criterion = torch.nn.MSELoss(reduction='none')
+
+    scorer = MeteorScorer(train_dataset.train_vocab, device, cfg.rl_gamma_worker, cfg.rl_gamma_manager)
+
     
     #if cfg.optimizer == 'adam':
     #    optimizer = torch.optim.Adam(model.parameters(), cfg.lr, (cfg.beta1, cfg.beta2), cfg.eps,
     #                                weight_decay=cfg.weight_decay)
-    #elif cfg.optimizer == 'sgd':
-    #    optimizer = torch.optim.SGD(model.parameters(), cfg.lr, cfg.momentum,
-    #                                weight_decay=cfg.weight_decay)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    cap_lr = cfg.rl_cap_warmstart_lr if cfg.rl_warmstart_epochs > 0 else cfg.rl_cap_lr
+    optimizer = torch.optim.Adam(model.parameters(), lr=cap_lr, weight_decay=cfg.weight_decay)
+    wv_optimizer = torch.optim.Adam(worker_value_model.parameters(), lr=cfg.rl_value_function_lr)
+    mv_optimizer = torch.optim.Adam(manager_value_model.parameters(), lr=cfg.rl_value_function_lr)
     
     if cfg.scheduler == 'reduce_on_plateau':
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -75,13 +85,21 @@ def train_rl_cap(cfg):
         scheduler = None
 
     model.to(device)
+    worker_value_model.to(device)
+    manager_value_model.to(device)
     if torch.cuda.is_available:
         print("Num dev " + str(torch.cuda.device_count()))
         model = torch.nn.DataParallel(model, cfg.device_ids)
+        worker_value_model = torch.nn.DataParallel(worker_value_model, cfg.device_ids)
+        manager_value_model = torch.nn.DataParallel(manager_value_model, cfg.device_ids)
+
     
     if cfg.rl_pretrained_model_dir is not None:
         print(f"Looking for pretrained model at {cfg.rl_pretrained_model_dir}", file=sys.stderr)
         loaded_model = model.module.load_model(cfg.rl_pretrained_model_dir)
+        loaded_wv_model = worker_value_model.module.load_model(cfg.rl_pretrained_model_dir)
+        loaded_mv_model = manager_value_model.module.load_model(cfg.rl_pretrained_model_dir)
+
 
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Total Number of Trainable Parameters: {param_num / 1000000} Mil.')
@@ -99,16 +117,22 @@ def train_rl_cap(cfg):
 
     is_warmstart = cfg.rl_warmstart_epochs > 0
 
-    alternate_training_switch = False#Start with Manager
+    alternate_training_switch = True#Start with Manager
     
     learning_rate_validation = False
 
+    models = {
+        "captioning": (model, optimizer, warmstart_criterion),
+        "worker": (worker_value_model, wv_optimizer, wv_criterion),
+        "manager": (manager_value_model, mv_optimizer, mv_criterion)
+    }
+
     #bmhrl_test(cfg, model, train_loader)
 
     #bmhrl_test(cfg, model, train_loader)
+
 
     for epoch in range(cfg.epoch_num):
-
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
         print(f'Expected early stop @ {epoch+cfg.early_stop_after-num_epoch_best_metric_unchanged}')
         print(f'Started @ {cfg.curr_time}; Current timer: {timer(cfg.curr_time)}')
@@ -133,11 +157,12 @@ def train_rl_cap(cfg):
 
         if is_warmstart:#0:
             print(f"Warmstarting HRL agent #{str(epoch)}", file=sys.stderr)
-            warmstart_bmhrl_2(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
+            #warmstart_bmhrl_2(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
+            warmstart_bmhrl_bl(cfg, models, scorer, train_loader, epoch, TBoard)
         else:
             #TODO log here for error?
             #rl_likelyhood(cfg, model, train_loader, optimizer, epoch, alternate_training_switch, TBoard)#TODO just train worker for now
-            train_bmhrl(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
+            train_bmhrl_bl(cfg, models, scorer, train_loader, epoch, TBoard, alternate_training_switch)
 
         #model.module.set_inference_mode(True)
         
@@ -166,17 +191,22 @@ def train_rl_cap(cfg):
 
         # validation (1-by-1 word)
         if epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
+            model.module.set_inference_mode(True)
+
             # validation with g.t. proposals
+
+            #----------TODO Enable Val2 again---------------
             val_1_metrics = validation_1by1_loop(
                 cfg, model, val_1_loader, bmhrl_inference, epoch, TBoard
             )
-            val_2_metrics = validation_1by1_loop(
-                cfg, model, val_2_loader, bmhrl_inference, epoch, TBoard
-            )
+            #val_2_metrics = validation_1by1_loop(
+            #    cfg, model, val_2_loader, bmhrl_inference, epoch, TBoard
+            #)
 
             if cfg.to_log:
                 # averaging metrics obtained from val_1 and val_2
-                metrics_avg = average_metrics_in_two_dicts(val_1_metrics, val_2_metrics)
+                #metrics_avg = average_metrics_in_two_dicts(val_1_metrics, val_2_metrics)
+                metrics_avg = val_1_metrics
                 metrics_avg = metrics_avg['Average across tIoUs']
                 
                 TBoard.add_scalar('metrics/meteor', metrics_avg['METEOR'] * 100, epoch)
@@ -191,6 +221,8 @@ def train_rl_cap(cfg):
                     
                     checkpoint_dir = get_model_checkpoint_dir(cfg, epoch)
                     model.module.save_model(checkpoint_dir)
+                    worker_value_model.module.save_model(checkpoint_dir)
+                    manager_value_model.module.save_model(checkpoint_dir)
 
                     #save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
                     #           val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
@@ -200,7 +232,9 @@ def train_rl_cap(cfg):
                     num_epoch_best_metric_unchanged += 1
         #model.module.set_inference_mode(False)
 
-        is_warmstart = is_warmstart and (epoch < (cfg.rl_warmstart_epochs - 1)) #TODO just for testing metrics
+        if is_warmstart and epoch > (cfg.rl_warmstart_epochs - 1):
+            is_warmstart = False
+            adjust_optimizer_lr(optimizer, cfg.rl_cap_lr)
         alternate_training_switch = not alternate_training_switch
 
 

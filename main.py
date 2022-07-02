@@ -1,5 +1,6 @@
 import argparse
 from pprint import pprint
+from scripts.test_model import test_rl_cap
 
 from utilities.config_constructor import Config
 from scripts.train_captioning_module import train_cap
@@ -22,6 +23,8 @@ def main(cfg):
         train_critic(cfg)
     elif cfg.procedure == 'test_critic':
         run_critic_test(cfg)
+    elif cfg.procedure == 'test_rl_cap':
+        test_rl_cap(cfg)
     else:
         raise NotImplementedError
 
@@ -43,8 +46,10 @@ if __name__ == "__main__":
     parser.add_argument('--rl_critic_path', type=str, default='./data/models/critic.cp', help='ddpg critic checkpoint path')
     parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.25, help='critic threshhold after softmax for labelling segments')
     parser.add_argument('--rl_dropout', type=float, default=0.1, help='rl dropout')
-    parser.add_argument('--rl_gamma_worker', type=float, default=0.9, help='reward diminishing constant')
-    parser.add_argument('--rl_gamma_manager', type=float, default=0.9, help='reward diminishing constant')
+
+    parser.add_argument('--rl_gamma_worker', type=float, default=0.65, help='reward diminishing constant')
+    parser.add_argument('--rl_gamma_manager', type=float, default=0.8, help='reward diminishing constant')
+
     parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
     parser.add_argument('--rl_train_worker', type=bool, help="train worker or manager")
     parser.add_argument('--rl_warmstart_epochs', type=int, default=1, help="Epochs trained via wamrstart before starting the agent")
@@ -60,6 +65,10 @@ if __name__ == "__main__":
     parser.add_argument('--rl_ff_v', type=int, default=1024, help='video FF Layer dim')
     parser.add_argument('--rl_ff_a', type=int, default=512, help='audio FF Layer dim')
 
+
+    parser.add_argument('--rl_value_function_lr', type=float, default=1e-4, help='value function lr')
+    parser.add_argument('--rl_cap_warmstart_lr', type=float, default=1e-4, help='warmstart captioning lr')
+    parser.add_argument('--rl_cap_lr', type=float, default=0.01, help='warmstart captioning lr')
 
 
     ## Critic
@@ -99,7 +108,7 @@ if __name__ == "__main__":
 
     ## TRAINING
     parser.add_argument('--procedure', type=str, required=True, 
-                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg', 'test_critic'])
+                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg', 'test_critic', 'test_rl_cap'])
     parser.add_argument('--device_ids', type=int, nargs='+', default=[0], help='separated by a whitespace')
     parser.add_argument('--start_token', type=str, default='<s>', help='starting token')
     parser.add_argument('--end_token', type=str, default='</s>', help='ending token')

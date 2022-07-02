@@ -38,7 +38,7 @@ class Config(object):
         #rl agent
 
         #--
-        if args.procedure == 'train_rl_cap' or args.procedure == 'test_critic':
+        if args.procedure == 'train_rl_cap' or args.procedure == 'test_critic' or args.procedure == 'test_rl_cap':
             self.rl_low_level_enc_d = args.rl_low_level_enc_d
             self.rl_high_level_enc_d = args.rl_high_level_enc_d
 
@@ -72,6 +72,10 @@ class Config(object):
             self.rl_ff_c = args.rl_ff_c
             self.rl_ff_v = args.rl_ff_v
             self.rl_ff_a = args.rl_ff_a
+            
+            self.rl_value_function_lr = args.rl_value_function_lr
+            self.rl_cap_warmstart_lr = args.rl_cap_warmstart_lr
+            self.rl_cap_lr = args.rl_cap_lr
 
         elif args.procedure == 'train_cap':
             self.word_emb_caps = args.word_emb_caps

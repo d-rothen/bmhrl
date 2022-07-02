@@ -12,6 +12,19 @@ from model.hrl_agent import AReLU
 from model.multihead_attention import MultiheadedAttention
 from scripts.device import get_device
 
+class ModelBase(nn.Module):
+    def __init__(self, name) -> None:
+        super(ModelBase, self).__init__()
+        self.name = name
+
+    def save_model(self, checkpoint_dir):
+        model_file_name =  checkpoint_dir + f"/{self.name}.pt"
+        torch.save(self.state_dict(), model_file_name)
+
+    def load_model(self, checkpoint_dir):
+        model_file_name =  checkpoint_dir + f"/{self.name}.pt"
+        self.load_state_dict(torch.load(model_file_name))
+
 class ModalityProjection(nn.Module):
     def __init__(self, d_mod, d_out, p_dout) -> None:
         super(ModalityProjection, self).__init__()
@@ -187,36 +200,44 @@ class BMEncoder(nn.Module):
 
         return (Av, Va)
 
-class BMWorkerRewardBaseline(nn.Module):
-    def __init__(self, d_worker_feat, d_goal, dout_p) -> None:
-        super(BMWorkerRewardBaseline, self).__init__()
+class BMWorkerValueFunction(ModelBase):
+    def __init__(self, cfg) -> None:
+        super(BMWorkerValueFunction, self).__init__("bm_worker_value_function")
+        d_goal = cfg.rl_goal_d
+        d_worker_feat = cfg.d_model_caps
+        dout_p = cfg.dout_p
+
         input_d = d_worker_feat + d_goal
         self.value_function = PositionwiseFeedForward(input_d, input_d*2, dout_p)
         self.projection = nn.Linear(input_d, 1)
         self.activation = nn.ReLU()
         #self.scaler_activation = nn.ReLU()
-        self.scaler = nn.Sigmoid()#Meteor Reward function goes between 0 and 1
+        #self.scaler = nn.Sigmoid()#Meteor Reward function goes between 0 and 1
 
-    def forward(self, x, goal):
-        predicted_value = self.value_function(torch.cat([x, goal], dim=-1))
+    def forward(self, x):
+        w_feat, goal = x
+        predicted_value = self.value_function(torch.cat([w_feat, goal], dim=-1))
         predicted_value = self.activation(predicted_value)
         predicted_value = self.projection(predicted_value)
         #predicted_value = self.scaler_activation(predicted_value)
-        return self.scaler(predicted_value)
+        return predicted_value#self.scaler(predicted_value)
 
-class BMManagerRewardBaseline(nn.Module):
-    def __init__(self, d_manager_feat, dout_p) -> None:
-        super(BMManagerRewardBaseline, self).__init__()
+class BMManagerValueFunction(ModelBase):
+    def __init__(self, cfg) -> None:
+        super(BMManagerValueFunction, self).__init__("bm_manager_value_function")
+        d_manager_feat = cfg.d_model_caps
+        dout_p = cfg.dout_p
+
         self.value_function = PositionwiseFeedForward(d_manager_feat, d_manager_feat*2, dout_p)
         self.projection = nn.Linear(d_manager_feat, 1)
         self.activation = nn.ReLU()
-        self.scaler = nn.Sigmoid()
+        #self.scaler = nn.Sigmoid()
     
     def forward(self, x):
         predicted_value = self.value_function(x)
         predicted_value = self.activation(predicted_value)
         predicted_value = self.projection(predicted_value)
-        return self.scaler(predicted_value)
+        return predicted_value#self.scaler(predicted_value)
 
 class BMEncoderLayer(nn.Module):
 
@@ -274,9 +295,9 @@ class BMEncoderLayer(nn.Module):
         return M1m2, M2m1
 
 class BMManager(nn.Module):
-    def __init__(self, d_model_caps, d_goal, dout_p, exploration=True) -> None:
+    def __init__(self, device, d_model_caps, d_goal, dout_p, exploration=True) -> None:
         super(BMManager, self).__init__()
-        
+        self.device = device
         self.linear = nn.Linear(d_model_caps, d_goal)
         self.dropout = nn.Dropout(dout_p)
         self.exploration = exploration
@@ -305,7 +326,9 @@ class BMManager(nn.Module):
             std, mean = torch.std_mean(x) #Could be SUPER volatile
             std /= self.std_factor
             mean /= self.mean_factor
-            noise = torch.empty(self.d_goal).normal_(mean=mean, std=std) - (0.5 * mean)
+            std = std.detach()
+            mean = mean.detach()
+            noise = (torch.empty(self.d_goal).normal_(mean=mean, std=std) - (0.5 * mean)).to(self.device)
             x = x + noise
 
         x = self.expand_goals(x, critic_mask)
@@ -321,14 +344,15 @@ class BMWorker(nn.Module):
 
         self.projection = nn.Linear(in_features=d_in+d_goal, out_features=voc_size)
         self.goal_attention = MultiheadedAttention(d_goal, d_in, d_in, heads, dout_p, d_model)
+        self.softmax = nn.Softmax(dim=-1)
         #self.dropout = nn.Dropout(dout_p)
         #self.norm = nn.LayerNorm()
 
     def forward(self, x, goal, mask):
         goal_completion = self.goal_attention(goal, x, x, mask)
         x = self.projection(torch.cat([x, goal_completion], dim=-1))
-        x = F.log_softmax(x, dim=-1)
-        return x
+
+        return self.softmax(x)
 
 class BMHrlAgent(nn.Module):
     def __init__(self, cfg, train_dataset):
@@ -344,9 +368,7 @@ class BMHrlAgent(nn.Module):
         self.dout_p = cfg.dout_p
         self.d_goal = cfg.rl_goal_d
         self.voc_size = train_dataset.trg_voc_size
-
         self.device = get_device(cfg)
-        self.scorer = MeteorScorer(train_dataset.train_vocab, self.device, cfg.rl_gamma_worker, cfg.rl_gamma_manager)
 
         self.critic_score_threshhold =cfg.rl_critic_score_threshhold
 
@@ -371,7 +393,7 @@ class BMHrlAgent(nn.Module):
             self.att_heads, self.att_layers
         )
 
-        self.manager = BMManager(self.d_model_caps, self.d_goal, self.dout_p)
+        self.manager = BMManager(self.device ,self.d_model_caps, self.d_goal, self.dout_p)
         self.worker = BMWorker(voc_size=self.voc_size, d_in=self.d_model_caps, d_goal=self.d_goal, dout_p=self.dout_p, d_model=self.d_model)
         
         self.teach_warmstart()
@@ -409,12 +431,14 @@ class BMHrlAgent(nn.Module):
         self.teaching_worker = True
         self._set_worker_grad(True)
         self._set_manager_grad(False)
+        self.manager.exploration = False
 
     def teach_manager(self):
         self.warmstarting = False
         self.teaching_worker = False
         self._set_manager_grad(True)
         self._set_worker_grad(False)
+        self.manager.exploration = True
 
     def set_inference_mode(self, inference):
         if inference:
@@ -423,7 +447,7 @@ class BMHrlAgent(nn.Module):
             self.manager.exploration = True
 
     def warmstart(self, x, trg, mask):
-        prediction = self.pred_log_softmax(x, trg, mask)[0]
+        prediction = self.pred_log_softmax(x, trg, mask)
         #score = self.scorer.delta_meteor(torch.argmax(prediction, -1), text, mask["C_mask"][:,-1])
         #cat = Categorical(prediction)
         return prediction
@@ -433,7 +457,7 @@ class BMHrlAgent(nn.Module):
         return torch.gather(prediction, 2, torch.unsqueeze(trg[:,1:],-1)).squeeze()#this will start with <s>
 
 
-    def pred_log_softmax(self, x, trg, mask):
+    def pred_log_softmax(self, x, trg, mask):#TODO rename, not log softmax but plain output
         x_video, x_audio = x
 
         V = self.pos_enc_V(x_video)
@@ -451,22 +475,15 @@ class BMHrlAgent(nn.Module):
         manager_feat = self.bm_manager_fus((C, (Av, Va)), mask)
 
         goals = self.manager(manager_feat, segment_labels)
-        return self.worker(worker_feat, goals, mask["C_mask"]), segment_labels
+        return self.worker(worker_feat, goals, mask["C_mask"]), worker_feat, manager_feat, goals, segment_labels
 
     def inference(self, x, trg, mask):
         return self.pred_log_softmax(x, trg, mask)[0]
 
-    def forward(self, x, trg, text, mask):
-        prediction, segment_labels = self.pred_log_softmax(x, trg, mask)
+    def forward(self, x, trg, mask):
+        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.pred_log_softmax(x, trg, mask)
 
-        if text is not None:
-            if self.teaching_worker:
-                score = self.scorer.delta_meteor(torch.argmax(prediction, -1), text, mask["C_mask"][:,-1])
-            else:
-                score = self.scorer.delta_meteor(torch.argmax(prediction, -1), text, mask["C_mask"][:,-1], segment_labels)
-            return prediction, score
-
-        return prediction
+        return prediction, worker_feat, manager_feat, goal_feat, segment_labels
         for i in range(self.max_len):
             if i >= (L-1) or torch.all(completion_mask):
                 break

@@ -21,8 +21,10 @@ class MeteorScorer():
                 rewards[b, l] = meteor_score([trg[b]], self.detokenizer.detokenize(partial_hypo))#TODO try also cutting ref to match hypo? but could overfit
 
         delta_meteor = rewards[:, 1:] - rewards[:,:-1]
-        delta_meteor = torch.cat((rewards[:,0].unsqueeze(-1), delta_meteor), dim=1)
-
+        #reward not seen by diff at pos 0
+        delta_meteor = torch.cat((rewards[:,0].unsqueeze(-1), delta_meteor), dim=1).to(self.device)
+        #Account for the shifted value thats outside the mask now
+        delta_meteor *= mask.float()
         return delta_meteor
 
     def segment_reward_queue(self, reward, sections):
@@ -43,8 +45,8 @@ class MeteorScorer():
     def delta_meteor_segment(self, delta_meteor_step_reward, sections, gamma_matrix):
         B,L = delta_meteor_step_reward.shape
 
-        segment_reward_queue, segment_reward_index = self.segment_reward_queue(delta_meteor_step_reward, sections).to(self.device)
-        discounted_segment_reward = torch.einsum("bl,bsl->bs",segment_reward_queue, gamma_matrix)
+        segment_reward_queue, segment_reward_index = self.segment_reward_queue(delta_meteor_step_reward, sections)
+        discounted_segment_reward = torch.einsum("bl,bsl->bs",segment_reward_queue.to(self.device), gamma_matrix)
 
         reward = torch.zeros(B,L)
         segment_index = torch.zeros(B, dtype=torch.int32)
@@ -60,16 +62,24 @@ class MeteorScorer():
         discounted_meteor = torch.einsum("bl,bsl->bs",meteor_diff, gamma_matrix)
         return discounted_meteor
 
-    def delta_meteor(self, pred, trg, mask, sections=None):
+    def delta_meteor_worker(self, pred, trg, mask):
+        B,L = pred.shape
+        gamma_matrix = self.get_gamma_matrix(self.gamma, B, L)
+        delta_meteor_step_reward = self.delta_meteor_step(pred, trg, mask, gamma_matrix)
+        return delta_meteor_step_reward
+
+    def delta_meteor_manager(self, pred, trg, mask, sections):
+        return self.delta_meteor(pred, trg, mask, sections)[1]
+
+    def delta_meteor(self, pred, trg, mask, sections):
         B,L = pred.shape
         gamma_matrix = self.get_gamma_matrix(self.gamma, B, L)
 
         delta_meteor_step_reward = self.delta_meteor_step(pred, trg, mask, gamma_matrix)
-        delta_meteor_step_reward = delta_meteor_step_reward
 
-        if sections is not None:
-            return self.delta_meteor_segment(delta_meteor_step_reward, sections, gamma_matrix)
-        return delta_meteor_step_reward
+        delta_meteor_section_reward = self.delta_meteor_segment(delta_meteor_step_reward, sections, gamma_matrix)
+        return delta_meteor_step_reward, delta_meteor_section_reward
+
 
 
     def expand_gamma(self, gamma):
