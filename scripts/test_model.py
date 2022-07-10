@@ -36,15 +36,15 @@ def test_rl_cap(cfg):
     # cuda id for training is not 0.
     device = get_device(cfg)
 
-    train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
+    dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
 
 
     # make sure that DataLoader has batch_size = 1!
-    train_loader = DataLoader(train_dataset, collate_fn=train_dataset.dont_collate)
+    loader = DataLoader(dataset, collate_fn=dataset.dont_collate)
 
 
     #model = HRLAgent(cfg=cfg, vocabulary=train_dataset.train_vocab)
-    model = BMHrlAgent(cfg, train_dataset)
+    model = BMHrlAgent(cfg, dataset)
     worker_value_model = BMWorkerValueFunction(cfg)
     manager_value_model = BMManagerValueFunction(cfg)
 
@@ -85,4 +85,4 @@ def test_rl_cap(cfg):
         "manager": (manager_value_model)
     }
 
-    bmhrl_test(cfg, models, train_loader)
+    bmhrl_test(cfg, models, loader)

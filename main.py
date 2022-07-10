@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--rl_value_function_lr', type=float, default=1e-4, help='value function lr')
     parser.add_argument('--rl_cap_warmstart_lr', type=float, default=1e-4, help='warmstart captioning lr')
-    parser.add_argument('--rl_cap_lr', type=float, default=0.01, help='warmstart captioning lr')
+    parser.add_argument('--rl_cap_lr', type=float, default=0.0001, help='warmstart captioning lr')
 
 
     ## Critic

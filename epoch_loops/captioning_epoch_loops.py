@@ -286,7 +286,7 @@ def validation_1by1_loop(cfg, model, loader, decoder, epoch, TBoard):
         # caption_idx, caption_idx_y = caption_idx[:, :-1], caption_idx[:, 1:]
         ### PREDICT TOKENS ONE-BY-ONE AND TRANSFORM THEM INTO STRINGS TO FORM A SENTENCE
         ints_stack = decoder(
-            model, batch['feature_stacks'], cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, batch["captions"], batch
+            model, batch['feature_stacks'], cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality#, batch["captions"], batch
         )
         ints_stack = ints_stack.cpu().numpy()  # what happens here if I use only cpu?
         # transform integers into strings

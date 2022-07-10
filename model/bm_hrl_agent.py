@@ -344,7 +344,7 @@ class BMWorker(nn.Module):
 
         self.projection = nn.Linear(in_features=d_in+d_goal, out_features=voc_size)
         self.goal_attention = MultiheadedAttention(d_goal, d_in, d_in, heads, dout_p, d_model)
-        self.softmax = nn.Softmax(dim=-1)
+        self.logsoftmax = nn.LogSoftmax(dim=-1)
         #self.dropout = nn.Dropout(dout_p)
         #self.norm = nn.LayerNorm()
 
@@ -352,7 +352,7 @@ class BMWorker(nn.Module):
         goal_completion = self.goal_attention(goal, x, x, mask)
         x = self.projection(torch.cat([x, goal_completion], dim=-1))
 
-        return self.softmax(x)
+        return self.logsoftmax(x)
 
 class BMHrlAgent(nn.Module):
     def __init__(self, cfg, train_dataset):
@@ -460,12 +460,15 @@ class BMHrlAgent(nn.Module):
     def pred_log_softmax(self, x, trg, mask):#TODO rename, not log softmax but plain output
         x_video, x_audio = x
 
+        C = self.emb_C(trg)
+
         V = self.pos_enc_V(x_video)
         A = self.pos_enc_A(x_audio)
-        C = self.emb_C(trg)
 
         segments = self.critic(C)
         segment_labels = (torch.sigmoid(segments) > self.critic_score_threshhold).squeeze().int()
+
+        C = self.pos_enc_C(C)
 
         #Self Att
         Va, Av = self.bm_enc((V, A), mask)

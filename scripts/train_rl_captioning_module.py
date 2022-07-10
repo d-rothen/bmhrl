@@ -131,6 +131,9 @@ def train_rl_cap(cfg):
 
     #bmhrl_test(cfg, model, train_loader)
 
+    #metrics_avg = eval_model(cfg, model, (val_1_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
+    #print(f"Meteor#{metrics_avg['METEOR']}", file=sys.stderr)
+    #return
 
     for epoch in range(cfg.epoch_num):
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
@@ -190,46 +193,26 @@ def train_rl_cap(cfg):
 
 
         # validation (1-by-1 word)
-        if epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
-            model.module.set_inference_mode(True)
+        if True:#epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
 
             # validation with g.t. proposals
+            metrics_avg = eval_model(cfg, model, (val_1_loader, 0), bmhrl_greedy_decoder, epoch, TBoard)
 
-            #----------TODO Enable Val2 again---------------
-            val_1_metrics = validation_1by1_loop(
-                cfg, model, val_1_loader, bmhrl_inference, epoch, TBoard
-            )
-            #val_2_metrics = validation_1by1_loop(
-            #    cfg, model, val_2_loader, bmhrl_inference, epoch, TBoard
-            #)
-
-            if cfg.to_log:
-                # averaging metrics obtained from val_1 and val_2
-                #metrics_avg = average_metrics_in_two_dicts(val_1_metrics, val_2_metrics)
-                metrics_avg = val_1_metrics
-                metrics_avg = metrics_avg['Average across tIoUs']
+            # saving the model if it is better than the best so far
+            if best_metric < metrics_avg['METEOR']:
+                best_metric = metrics_avg['METEOR']
                 
-                TBoard.add_scalar('metrics/meteor', metrics_avg['METEOR'] * 100, epoch)
-                TBoard.add_scalar('metrics/bleu4', metrics_avg['Bleu_4'] * 100, epoch)
-                TBoard.add_scalar('metrics/bleu3', metrics_avg['Bleu_3'] * 100, epoch)
-                TBoard.add_scalar('metrics/precision', metrics_avg['Precision'] * 100, epoch)
-                TBoard.add_scalar('metrics/recall', metrics_avg['Recall'] * 100, epoch)
-            
-                # saving the model if it is better than the best so far
-                if best_metric < metrics_avg['METEOR']:
-                    best_metric = metrics_avg['METEOR']
-                    
-                    checkpoint_dir = get_model_checkpoint_dir(cfg, epoch)
-                    model.module.save_model(checkpoint_dir)
-                    worker_value_model.module.save_model(checkpoint_dir)
-                    manager_value_model.module.save_model(checkpoint_dir)
+                checkpoint_dir = get_model_checkpoint_dir(cfg, epoch)
+                model.module.save_model(checkpoint_dir)
+                worker_value_model.module.save_model(checkpoint_dir)
+                manager_value_model.module.save_model(checkpoint_dir)
 
-                    #save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
-                    #           val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
-                    # reset the early stopping criterion
-                    num_epoch_best_metric_unchanged = 0
-                else:
-                    num_epoch_best_metric_unchanged += 1
+                #save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
+                #           val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
+                # reset the early stopping criterion
+                num_epoch_best_metric_unchanged = 0
+            else:
+                num_epoch_best_metric_unchanged += 1
         #model.module.set_inference_mode(False)
 
         if is_warmstart and epoch > (cfg.rl_warmstart_epochs - 1):
@@ -242,3 +225,27 @@ def train_rl_cap(cfg):
     print(f'best_metric: {best_metric}')
     if cfg.to_log:
         TBoard.close()
+
+
+def eval_model(cfg, model, val_loaders, decoder, epoch, TBoard):
+    model.module.set_inference_mode(True)
+    val_1_loader, val_2_loader = val_loaders
+
+    val_1_metrics = validation_1by1_loop(
+        cfg, model, val_1_loader, decoder, epoch, TBoard
+    )
+    #val_2_metrics = validation_1by1_loop(
+    #    cfg, model, val_2_loader, bmhrl_inference, epoch, TBoard
+    #)
+
+    metrics_avg = val_1_metrics
+    metrics_avg = metrics_avg['Average across tIoUs']
+    
+    TBoard.add_scalar('metrics/meteor', metrics_avg['METEOR'] * 100, epoch)
+    TBoard.add_scalar('metrics/bleu4', metrics_avg['Bleu_4'] * 100, epoch)
+    TBoard.add_scalar('metrics/bleu3', metrics_avg['Bleu_3'] * 100, epoch)
+    TBoard.add_scalar('metrics/precision', metrics_avg['Precision'] * 100, epoch)
+    TBoard.add_scalar('metrics/recall', metrics_avg['Recall'] * 100, epoch)
+
+    return metrics_avg
+            

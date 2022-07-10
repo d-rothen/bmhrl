@@ -8,12 +8,12 @@ def word_from_vector(vocab, indices):
 
 class MeteorScorer():
     def _meteor_diff(self, pred, trg, mask):
-        last_token = (torch.sum(mask, dim=1)) - 1
+        last_token = (torch.sum(mask, dim=1))
         B, L = pred.shape
         rewards = torch.zeros(B, L, dtype=torch.float32)
 
         for b in torch.arange(B):
-            seq_len = last_token[b] + 1
+            seq_len = last_token[b]
             hypo = word_from_vector(self.vocab, pred[b])
 
             for l in torch.arange(seq_len):
@@ -24,7 +24,7 @@ class MeteorScorer():
         #reward not seen by diff at pos 0
         delta_meteor = torch.cat((rewards[:,0].unsqueeze(-1), delta_meteor), dim=1).to(self.device)
         #Account for the shifted value thats outside the mask now
-        delta_meteor *= mask.float()
+        #delta_meteor *= mask.float()
         return delta_meteor
 
     def segment_reward_queue(self, reward, sections):

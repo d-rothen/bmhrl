@@ -8,6 +8,7 @@ from epoch_loops.captioning_epoch_loops import make_masks
 from metrics.batched_meteor import MeteorScorer
 from utilities.captioning_utils import get_lr
 import torch.nn as nn
+import torch.nn.functional as F
 from scripts.device import get_device
 
 def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality, captions, batch):
@@ -24,39 +25,7 @@ def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx,
     predicted_words = torch.max(prediction, -1)
 
     return predicted_words[1]#Tuple -> return indices
-
-def test_print(msg):
-    print(msg, file=sys.stderr)
-
-def test_sentence(loader, prediction):
-    return " ".join([loader.dataset.train_vocab.itos[i] for i in prediction[0]])
-
-def bmhrl_test(cfg, models, loader):
-    cap_model = models["captioning"]
-    wv_model = models["worker"]
-    mv_model = models["manager"]
-
-
-    start_idx = loader.dataset.start_idx
-    end_idx = loader.dataset.end_idx
-    pad_idx = loader.dataset.pad_idx
-    phase = loader.dataset.phase
-
-    epoch = 0
-    progress_bar_name = f'{cfg.curr_time[2:]}: {phase} {epoch} @ {cfg.device}'
-
-    for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
-        src = batch['feature_stacks']
-        caption_idx = batch['caption_data'].caption #batchsize x max_seq_len, vocab indices
-        caption_idx_y = caption_idx[:, 1:]
-        test_print(f'Groundtruth: {test_sentence(loader, caption_idx_y)}')
-
-        test_1 = bmhrl_inference(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, None, batch)
-        test_print(f'With trg: {test_sentence(loader, test_1)}')
-
-        synthesis = bmhrl_greedy_decoder(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
-        test_print(f'Greedy Decoder: {test_sentence(loader, synthesis)}')
-
+    
 def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
     #assert model.training is False, 'call model.eval first'
 
@@ -85,6 +54,39 @@ def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad
             completeness_mask = completeness_mask | torch.eq(next_word, end_idx).byte()
 
         return trg
+
+def test_print(msg):
+    print(msg, file=sys.stderr)
+
+def test_sentence(loader, prediction):
+    return " ".join([loader.dataset.train_vocab.itos[i] for i in prediction])
+
+def bmhrl_test(cfg, models, loader):
+    cap_model = models["captioning"]
+    wv_model = models["worker"]
+    mv_model = models["manager"]
+
+
+    start_idx = loader.dataset.start_idx
+    end_idx = loader.dataset.end_idx
+    pad_idx = loader.dataset.pad_idx
+    phase = loader.dataset.phase
+
+    epoch = 0
+    progress_bar_name = f'{cfg.curr_time[2:]}: {phase} {epoch} @ {cfg.device}'
+
+    for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
+        src = batch['feature_stacks']
+        caption_idx = batch['caption_data'].caption #batchsize x max_seq_len, vocab indices
+        caption_idx_y = caption_idx[:, 1:]
+        test_print(f'Groundtruth: {test_sentence(loader, caption_idx_y[0])}')
+
+        test_1 = bmhrl_inference(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, None, batch)
+        test_print(f'With trg: {test_sentence(loader, test_1[0])}')
+
+        synthesis = bmhrl_greedy_decoder(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
+        test_print(f'Greedy Decoder: {test_sentence(loader, synthesis[0])}')
+
 
 
 def bmhrl_validation_next_word_loop(cfg, model, loader, decoder, criterion, epoch, TBoard, exp_name):
@@ -311,34 +313,107 @@ def get_score(train_worker, scorer, predicted_tokens, caption, mask, segments):
         return scorer.delta_meteor_worker(predicted_tokens, caption, mask)
     return scorer.delta_meteor_manager(predicted_tokens, caption, mask, segments)
 
-def sample_predictions(train_worker, prediction, scorer, expected_scores, trg_caption, prediction_mask, segments, n_samples, device):
+def sample_loss_kl(train_worker, prediction, scorer, expected_scores, trg, trg_caption, prediction_mask, segments, device, kl_div, pad_idx):
+    B, S, V = prediction.shape
+    smoothing = 0.7
+    trg_factor = 1 - smoothing
+
+    greedy_pred = torch.argmax(prediction, -1)
+    log_probs = torch.gather(prediction, 2, greedy_pred.unsqueeze(-1)).squeeze()
+    score = get_score(train_worker, scorer, greedy_pred, trg_caption, prediction_mask, segments).to(device)
+    #dist_factor = F.sigmoid((score * torch.exp(log_probs)) * 3)#TODO just testing
+    #biased_ampl = dist_factor * trg_factor
+    biased_ampl = F.sigmoid(score) * torch.exp(log_probs) * trg_factor
+
+    test_print(torch.max(biased_ampl))
+    test_print(torch.mean(biased_ampl))
+
+    #test_print(biased_ampl)
+
+    trg_ampl = (trg_factor - biased_ampl).contiguous().view(-1)
+
+    #torch.scatter
+
+    biased_dist = torch.zeros_like(prediction)
+    biased_dist = torch.scatter(biased_dist, 2, greedy_pred.unsqueeze(-1), biased_ampl.unsqueeze(-1))
+
+
+    # (B, S, V) -> (B * S, V); (B, S) -> (B * S)
+    pred = prediction.contiguous().view(-1, V)
+    target = trg.contiguous().view(-1)
+    
+    # prior (uniform)
+    dist = smoothing * torch.ones_like(pred) / (V - 2)
+    # add smoothed ground-truth to prior (args: dim, index, src (value))
+    dist.scatter_(1, target.unsqueeze(-1).long(), trg_ampl.unsqueeze(-1)) #Essentially "One Hot" encode traget with .3 (rest is 1/vocsize-1 * .7)
+    # make the padding token to have zero probability
+    dist[:, pad_idx] = 0
+    dist = dist + biased_dist.contiguous().view(-1, V)
+    # ?? mask: 1 if target == pad_idx; 0 otherwise 
+    mask = torch.nonzero(target == pad_idx)
+    
+    if mask.sum() > 0 and len(mask) > 0: #(padded sentences are present)
+        # dim, index, val
+        dist.index_fill_(0, mask.squeeze(), 0) #set distance 0 where there are padding tokens
+
+    return kl_div(pred, dist), [score], [greedy_pred]
+
+
+def sample_loss(train_worker, prediction, scorer, expected_scores, trg, trg_caption, prediction_mask, segments, n_samples, device):
+    greedy_pred = torch.argmax(prediction, -1)
+    log_probs = torch.gather(prediction, 2, greedy_pred.unsqueeze(-1)).squeeze()
+
+    score = get_score(train_worker, scorer, greedy_pred, trg_caption, prediction_mask, segments).to(device)
+    score.requires_grad_(True)
+
+    test_loss = -(log_probs * score * prediction_mask.float())
+
+    return test_loss, [score], [greedy_pred]
+
+
     B,L,V = prediction.shape
-    pred_distribution = Categorical(prediction) 
+    pred_distribution = Categorical(prediction)
     samples = pred_distribution.sample_n(n_samples)
 
     with torch.no_grad():
         scores = torch.zeros(n_samples, B, L).to(device)
         for n in range(n_samples):
             scores[n] = get_score(train_worker, scorer, samples[n], trg_caption, prediction_mask, segments).to(device)
-    
-    sample_returns = scores - expected_scores.unsqueeze(0).detach()
+
+    factor = scores[0]
+    factor.requires_grad_(True)
+    test_loss = -(log_probs * scores[0] * prediction_mask.float())
+
+    return test_loss, scores, [greedy_pred]
+    #sample_returns = scores - expected_scores.unsqueeze(0).detach()
+    sample_returns = scores
 
     losses = torch.zeros(n_samples, B, L).to(device)
     for n in range(n_samples):
         log_probs = pred_distribution.log_prob(samples[n])
-        log_probs *= prediction_mask
-        log_probs *= sample_returns[n]
+        log_probs *= prediction_mask.float()
+        #log_probs *= sample_returns[n]
         losses[n] = -log_probs
     
-    return losses, sample_returns
+    return losses, scores, samples
 
+def log_iteration(loader, pred, trg, score, score_pred):
+    B,L = pred.shape
+    test_print(f'Summed Score: {torch.sum(score)}')
 
+    for b in range(B):
+        test_print(f'Pred[{b}]: {test_sentence(loader, pred[b])}')
+        test_print(f'Trg[{b}]: {test_sentence(loader, trg[b])}')#TODO this doesnt show up?
+        test_print(f'Score[{b}]: {score[b]}')
+        test_print(f'Score_pred[{b}]: {score_pred[b]}')
 
 
 def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
     cap_model, cap_optimizer, cap_criterion = models["captioning"]
     wv_model, wv_optimizer, wv_criterion = models["worker"]
     mv_model, mv_optimizer, mv_criterion = models["manager"]
+
+    kl_div = nn.KLDivLoss(reduction="sum")
 
     cap_model.train()#.cuda()
     loader.dataset.update_iterator()
@@ -375,47 +450,38 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
         V, A = src['rgb'] + src['flow'], src['audio']
         prediction, worker_feat, manager_feat, goal_feat, segment_labels = cap_model((V,A), caption_idx, masks)
 
-        prediction_mask = masks["C_mask"][:,-1]#TODO is this even right? should use idx_y?
+        loss_mask = (caption_idx_y != 1)
 
-        with torch.no_grad():
-            predicted_tokens = torch.argmax(prediction, -1)
-            if train_worker:
-                score = scorer.delta_meteor_worker(predicted_tokens, batch['captions'], prediction_mask)
-            else:
-                score = scorer.delta_meteor_manager(predicted_tokens, batch['captions'], prediction_mask, segment_labels)
-            score = score.to(device)
-            #score_mask = (score != 0).float()
         if train_worker:
             expected_value = wv_model((worker_feat.detach(), goal_feat.detach())).squeeze()
         else:
             expected_value = mv_model((manager_feat.detach())).squeeze()
 
+
+        token_mask = (caption_idx_y != loader.dataset.pad_idx)
+        n_tokens = token_mask.sum()
+
+        losses, scores, samples = sample_loss_kl(train_worker=train_worker, prediction=prediction, scorer=scorer, expected_scores=expected_value.detach(), trg=caption_idx_y, trg_caption=batch['captions'],
+            prediction_mask=loss_mask, segments = segment_labels, device=device, pad_idx=loader.dataset.pad_idx, kl_div=kl_div)
      
         #log_l = torch.gather(prediction, 2, torch.unsqueeze(caption_idx_y,-1)).squeeze()
 
         # ------------cap loss--------------
-        loss_mask = (caption_idx_y != 1).float()#TODO use preset token for padding
-
-        expected_value_baseline = expected_value.detach()# * score_mask#TODO this is experimental in order to not just flatten the whole vocab
-        return_value = score - expected_value_baseline
-        scaled_return_value = return_value * reward_weight
-        scaled_return_value = normalize_reward(scaled_return_value)
-
-        cap_loss = wang_loss_rl(prediction)
-        cap_loss *= (loss_mask * scaled_return_value)
-        cap_loss = torch.sum(cap_loss, -1)
-        cap_loss = torch.mean(cap_loss)
+        #cap_loss = torch.sum(losses, -1)
+        #cap_loss = torch.mean(cap_loss, -1)
+        #cap_loss = torch.mean(cap_loss, -1)
+        cap_loss = losses / n_tokens
         cap_loss.backward()
         cap_optimizer.step()
 
         if cfg.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(cap_model.parameters(), cfg.grad_clip)
         # -----------------------------------
-
+        score = scores[0]
         # -----------value loss-------------
         loss_mask = loss_mask if train_worker else segment_labels.detach().float()
         #loss_mask *= score_mask #TODO experimental
-        value_loss = value_criterion(expected_value, score) * loss_mask
+        value_loss = value_criterion(expected_value, score) * loss_mask.float()
         value_loss = value_loss.mean()
         value_loss.backward()
         value_optimizer.step()
@@ -425,11 +491,14 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
 
         #--------test logs ----------
         if (i % 100) == 0:
-            test_print(torch.sum(score))
-            test_print(test_sentence(loader, predicted_tokens))
-            test_print(test_sentence(loader, caption_idx_y))#TODO this doesnt show up?
-            test_print(score[0])
-            test_print(expected_value[0])
+            log_iteration(loader, samples[0], caption_idx_y, score, expected_value)
+
+            start_idx = loader.dataset.start_idx
+            end_idx = loader.dataset.end_idx
+            pad_idx = loader.dataset.pad_idx
+
+            greedy = bmhrl_greedy_decoder(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
+            test_print(f'Greedy Decoder: {test_sentence(loader, greedy[0])}')
 
     train_total_loss_norm = train_total_loss / len(loader)
     
@@ -473,7 +542,7 @@ def warmstart_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard):
 
         token_mask = (caption_idx_y != loader.dataset.pad_idx)
         n_tokens = token_mask.sum()
-        loss = cap_criterion(torch.log(prediction), caption_idx_y) / n_tokens
+        loss = cap_criterion(prediction, caption_idx_y) / n_tokens
         loss.backward()
         cap_optimizer.step()
 
