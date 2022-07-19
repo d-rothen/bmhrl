@@ -1,39 +1,9 @@
-import argparse
-from pprint import pprint
-from scripts.test_model import test_rl_cap
-
+from test_model import model_info
 from utilities.config_constructor import Config
-from scripts.train_captioning_module import train_cap
-from scripts.train_rl_captioning_module import train_rl_cap
-from scripts.train_proposal_generator import train_prop
-from scripts.eval_on_learned_props import eval_on_learned_props
-from scripts.train_critic import train_critic
-from sample.critic_test import run_critic_test
+import argparse
+import sys
 
-def main(cfg):
-    if cfg.procedure == 'train_cap':
-        train_cap(cfg)
-    elif cfg.procedure == 'train_rl_cap':
-        train_rl_cap(cfg)
-    elif cfg.procedure == 'train_prop':
-        train_prop(cfg)
-    elif cfg.procedure == 'evaluate':
-        eval_on_learned_props(cfg)
-    elif cfg.procedure == 'train_critic':
-        train_critic(cfg)
-    elif cfg.procedure == 'test_critic':
-        run_critic_test(cfg)
-    elif cfg.procedure == 'test_rl_cap':
-        test_rl_cap(cfg)
-    else:
-        raise NotImplementedError
-
-
-if __name__ == "__main__":
-    '''
-        Note, that the arguments are shared for both train_cap and train_prop that leads to the 
-        situation in which an argument is defined but unused (--word_emb_caps for train_prop case).
-    '''
+def load_cfg():
     parser = argparse.ArgumentParser(description='Run experiment')
 
     parser.add_argument('--rl_high_level_enc_d', type=int, default=256, help='rl enc dimensions')
@@ -47,7 +17,7 @@ if __name__ == "__main__":
     parser.add_argument('--rl_critic_score_threshhold', type=float, default=0.25, help='critic threshhold after softmax for labelling segments')
     parser.add_argument('--rl_dropout', type=float, default=0.1, help='rl dropout')
 
-    parser.add_argument('--rl_gamma_worker', type=float, default=0.7, help='reward diminishing constant')
+    parser.add_argument('--rl_gamma_worker', type=float, default=0.65, help='reward diminishing constant')
     parser.add_argument('--rl_gamma_manager', type=float, default=0.8, help='reward diminishing constant')
 
     parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
@@ -226,13 +196,7 @@ if __name__ == "__main__":
     parser.set_defaults(to_log=True)
 
     args = parser.parse_args()
-    pprint(vars(args))
-    cfg = Config(args)
 
-    if args.debug:
-        # load your test to debug something using the same config as main() would
-        # from tests import test_features_max_length
-        # test_features_max_length(cfg)
-        pass
-    else:
-        main(cfg)
+    return Config(args)
+
+model_info(load_cfg())

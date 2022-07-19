@@ -19,3 +19,4 @@ slurm_dbg/code-server-gpu1/reconnect.sh
 slurm_dbg/code-server-gpu1/stop_vscode.sh
 slurm_dbg/code-server-gpu1/reconnect_info
 .vector_cache_2/
+checkpoints/

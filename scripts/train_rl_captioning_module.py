@@ -131,7 +131,7 @@ def train_rl_cap(cfg):
 
     #bmhrl_test(cfg, model, train_loader)
 
-    #metrics_avg = eval_model(cfg, model, (val_1_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
+    metrics_avg = eval_model(cfg, model, (val_2_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
     #print(f"Meteor#{metrics_avg['METEOR']}", file=sys.stderr)
     #return
 
@@ -193,7 +193,7 @@ def train_rl_cap(cfg):
 
 
         # validation (1-by-1 word)
-        if True:#epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
+        if epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
 
             # validation with g.t. proposals
             metrics_avg = eval_model(cfg, model, (val_1_loader, 0), bmhrl_greedy_decoder, epoch, TBoard)

@@ -11,4 +11,4 @@
 #SBATCH -o /home/rothenda/BMT/slurm_out/train_debug.%A.%a.%N.out
 #SBATCH -J bmt-cap
 
-python main.py > /home/rothenda/BMT/slurm_out/print.out --procedure train_rl_cap --rl_warmstart_epochs 5 --rl_train_worker True --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/
+python main.py > /home/rothenda/BMT/slurm_out/print.out --procedure train_rl_cap  --rl_pretrained_model_dir /home/rothenda/BMT/log/train_rl_cap/0709194813/checkpoints/E_19 --rl_warmstart_epochs 0 --rl_train_worker False --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/

@@ -27,8 +27,6 @@ def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx,
     return predicted_words[1]#Tuple -> return indices
     
 def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
-    #assert model.training is False, 'call model.eval first'
-
     with torch.no_grad():
         
         if 'audio' in modality:
@@ -356,7 +354,9 @@ def sample_loss_kl(train_worker, prediction, scorer, expected_scores, trg, trg_c
         # dim, index, val
         dist.index_fill_(0, mask.squeeze(), 0) #set distance 0 where there are padding tokens
 
-    return kl_div(pred, dist), [score], [greedy_pred]
+    divergence = kl_div(pred, dist)
+
+    return divergence, [score], [greedy_pred]
 
 
 def sample_loss(train_worker, prediction, scorer, expected_scores, trg, trg_caption, prediction_mask, segments, n_samples, device):
@@ -421,7 +421,7 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
 
     device = get_device(cfg)
     
-    train_worker = True #---------------------------------------------------TODO REMOVE
+    #train_worker = True #---------------------------------------------------TODO REMOVE
     if train_worker:
         wv_model.train()
         cap_model.module.teach_worker()

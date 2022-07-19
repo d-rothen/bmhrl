@@ -26,6 +26,15 @@ from pathlib import Path
 from utilities.folders import get_model_checkpoint_dir
 import sys
 
+
+def get_learned_constants(model):
+    p = lambda x: print(x, file=sys.stderr)
+    for layer in model.module.bm_worker_fus.decoder.layers:
+        p(f'Worker av: {layer.a_v_constant}')
+    for layer in model.module.bm_manager_fus.decoder.layers:
+        p(f'Manager av: {layer.a_v_constant}')
+
+
 def test_rl_cap(cfg):
     torch.backends.cudnn.benchmark = True    # doing our best to make it replicable
     torch.manual_seed(0)
@@ -84,5 +93,24 @@ def test_rl_cap(cfg):
         "worker": (worker_value_model),
         "manager": (manager_value_model)
     }
-
+    get_learned_constants(model)
     bmhrl_test(cfg, models, loader)
+
+def model_info(cfg):
+    dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
+
+    #model = HRLAgent(cfg=cfg, vocabulary=train_dataset.train_vocab)
+    model = BMHrlAgent(cfg, dataset)
+    count_parameters(model)
+
+def count_parameters(model):
+    strings = []
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        strings.append(f'{name}\t{params}')
+        total_params+=params
+    print("\n".join(strings))
+    print(f"Total Trainable Params: {total_params}")
+    return total_params
