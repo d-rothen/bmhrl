@@ -10,6 +10,7 @@ from utilities.captioning_utils import get_lr
 import torch.nn as nn
 import torch.nn.functional as F
 from scripts.device import get_device
+from torch import autograd
 
 def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality, captions, batch):
     src = feature_stacks
@@ -28,7 +29,6 @@ def bmhrl_inference(model, feature_stacks, max_len, start_idx, end_idx, pad_idx,
     
 def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad_idx, modality):
     with torch.no_grad():
-        
         if 'audio' in modality:
             B, _Sa_, _Da_ = feature_stacks['audio'].shape
             device = feature_stacks['audio'].device
@@ -46,7 +46,7 @@ def bmhrl_greedy_decoder(model, feature_stacks, max_len, start_idx, end_idx, pad
         while (trg.size(-1) <= max_len) and (not completeness_mask.all()):
             masks = make_masks(feature_stacks, trg, modality, pad_idx)#TODO Like this we get a mask allowing the WHOLE image + audio sequence ?
             V, A = feature_stacks['rgb'] + feature_stacks['flow'], feature_stacks['audio']
-            preds = model.module.inference((V,A), trg, masks)
+            preds = model.inference((V,A), trg, masks)
             next_word = preds[:, -1].max(dim=-1)[1].unsqueeze(1)
             trg = torch.cat([trg, next_word], dim=-1)
             completeness_mask = completeness_mask | torch.eq(next_word, end_idx).byte()
@@ -82,7 +82,7 @@ def bmhrl_test(cfg, models, loader):
         test_1 = bmhrl_inference(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality, None, batch)
         test_print(f'With trg: {test_sentence(loader, test_1[0])}')
 
-        synthesis = bmhrl_greedy_decoder(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
+        synthesis = bmhrl_greedy_decoder(cap_model.module, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
         test_print(f'Greedy Decoder: {test_sentence(loader, synthesis[0])}')
 
 
@@ -311,17 +311,172 @@ def get_score(train_worker, scorer, predicted_tokens, caption, mask, segments):
         return scorer.delta_meteor_worker(predicted_tokens, caption, mask)
     return scorer.delta_meteor_manager(predicted_tokens, caption, mask, segments)
 
-def sample_loss_kl(train_worker, prediction, scorer, expected_scores, trg, trg_caption, prediction_mask, segments, device, kl_div, pad_idx):
+def normed_kl(train_worker, prediction, scorer, expected_scores, trg, trg_caption, mask, segments, device, kl_div, pad_idx):
+    B,S,V = prediction.shape
+    smoothing = 0.7
+    trg_factor = 1 - smoothing
+
+    #diagnose
+    nan_check = prediction[prediction != prediction]
+    if nan_check.shape != torch.tensor([]).shape:
+        test_print(prediction)
+    #-----
+
+    dist = Categorical(prediction)
+    sampled = dist.sample()#TODO this samples on log probs not probs
+
+    probs = torch.gather(prediction, 2, sampled.unsqueeze(-1)).squeeze()
+
+    score = get_score(train_worker, scorer, sampled, trg_caption, mask, segments).to(device)
+    unexpected_score = torch.clamp(score - expected_scores, -1,1)
+
+    norm_reward_factor = torch.sum(mask, dim=-1)
+    norm_reward_factor = torch.reshape(norm_reward_factor, (-1,1))
+
+    amplitude = unexpected_score * norm_reward_factor.float() * trg_factor * probs
+
+    base_amplitude = 1/(V-2)#TODO evaluate
+    biased_ampl = amplitude + base_amplitude
+    biased_ampl = torch.clamp(biased_ampl, 0, 1)
+
+    test_print(torch.max(biased_ampl))
+    test_print(torch.mean(biased_ampl))
+
+    trg_ampl = (trg_factor - biased_ampl).contiguous().view(-1)
+
+    biased_dist = torch.zeros_like(prediction)
+    biased_dist = torch.scatter(biased_dist, 2, sampled.unsqueeze(-1), biased_ampl.unsqueeze(-1))
+
+    # (B, S, V) -> (B * S, V); (B, S) -> (B * S)
+    pred = prediction.contiguous().view(-1, V)
+    target = trg.contiguous().view(-1)
+    
+    # prior (uniform)
+    dist = smoothing * torch.ones_like(pred) / (V - 2)
+    # add smoothed ground-truth to prior (args: dim, index, src (value))
+    dist.scatter_(1, target.unsqueeze(-1).long(), trg_ampl.unsqueeze(-1)) #Essentially "One Hot" encode traget with .3 (rest is 1/vocsize-1 * .7)
+    # make the padding token to have zero probability
+    dist[:, pad_idx] = 0
+    dist = dist + biased_dist.contiguous().view(-1, V)
+    # ?? mask: 1 if target == pad_idx; 0 otherwise 
+    mask = torch.nonzero(target == pad_idx)
+    
+    if mask.sum() > 0 and len(mask) > 0: #(padded sentences are present)
+        # dim, index, val
+        dist.index_fill_(0, mask.squeeze(), 0) #set distance 0 where there are padding tokens
+
+    divergence = kl_div(pred, dist)
+
+    return divergence, [score], [sampled], [amplitude]
+    
+
+def sample_loss_kl(train_worker, prediction, scorer, expected_scores, trg, trg_caption, mask, segments, device, kl_div, pad_idx):
+    B, S, V = prediction.shape
+    smoothing = 0.7
+    trg_factor = 1 - smoothing
+
+
+    pred_probs = torch.exp(prediction)
+    dist = Categorical(pred_probs)
+    greedy_pred = dist.sample()
+
+    #greedy_pred = torch.argmax(prediction, -1)
+
+    #dist = Categorical(prediction)
+    #greedy_pred = dist.sample()
+
+
+    score = get_score(train_worker, scorer, greedy_pred, trg_caption, mask, segments).to(device)
+
+    if not train_worker:
+        log_probs = torch.gather(prediction, 2, greedy_pred.unsqueeze(-1)).squeeze()
+        loss = -log_probs * score
+        return loss, [score], [greedy_pred], [0]
+
+    log_probs = torch.gather(pred_probs, 2, greedy_pred.unsqueeze(-1)).squeeze()
+
+    test_print(f"\nProbs. : min = {torch.min(log_probs)}, max = {torch.max(log_probs)}")
+
+
+
+    #dist_factor = F.sigmoid((score * torch.exp(log_probs)) * 3)#TODO just testing
+    #biased_ampl = dist_factor * trg_factor
+
+    norm_reward_factor = torch.sum(mask, dim=-1)
+    norm_reward_factor = torch.reshape(norm_reward_factor, (-1,1))
+
+    test_print(f"NormFac. : min = {torch.min(norm_reward_factor)}, max = {torch.max(norm_reward_factor)}") 
+
+
+    score = torch.clamp(score, 0, 1)
+    amplitude = score * trg_factor * log_probs * norm_reward_factor.float() 
+    #amplitude = torch.clamp(amplitude, 0, 1)#TODO make use of negative rewards
+
+    biased_ampl = amplitude
+
+    test_print(f"Amplitude : min = {torch.min(biased_ampl)}, mean = {torch.mean(biased_ampl)}, max = {torch.max(biased_ampl)}") 
+
+    #test_print(biased_ampl)
+
+    trg_ampl = (trg_factor - biased_ampl).contiguous().view(-1)
+
+    #torch.scatter
+
+    biased_dist = torch.zeros_like(prediction)
+    biased_dist = torch.scatter(biased_dist, 2, greedy_pred.unsqueeze(-1), biased_ampl.unsqueeze(-1))
+
+
+    # (B, S, V) -> (B * S, V); (B, S) -> (B * S)
+    pred = prediction.contiguous().view(-1, V)
+    target = trg.contiguous().view(-1)
+    
+    # prior (uniform)
+    dist = smoothing * torch.ones_like(pred) / (V - 2)
+    # add smoothed ground-truth to prior (args: dim, index, src (value))
+    dist.scatter_(1, target.unsqueeze(-1).long(), trg_ampl.unsqueeze(-1)) #Essentially "One Hot" encode traget with .3 (rest is 1/vocsize-1 * .7)
+    # make the padding token to have zero probability
+    dist[:, pad_idx] = 0
+    dist = dist + biased_dist.contiguous().view(-1, V)
+    # ?? mask: 1 if target == pad_idx; 0 otherwise 
+    mask = torch.nonzero(target == pad_idx)
+    
+    if mask.sum() > 0 and len(mask) > 0: #(padded sentences are present)
+        # dim, index, val
+        dist.index_fill_(0, mask.squeeze(), 0) #set distance 0 where there are padding tokens
+
+    #test_print(pred[1])
+    #test_print(dist[1])
+
+    divergence = kl_div(pred, dist)
+
+    #test_print(divergence)
+
+    test_print(f"Divergence. : min = {torch.min(divergence)}, max = {torch.max(divergence)}") 
+
+    return divergence, [score], [greedy_pred], [amplitude]
+
+def sample_loss_kl_old(train_worker, prediction, scorer, expected_scores, trg, trg_caption, mask, segments, device, kl_div, pad_idx):
     B, S, V = prediction.shape
     smoothing = 0.7
     trg_factor = 1 - smoothing
 
     greedy_pred = torch.argmax(prediction, -1)
     log_probs = torch.gather(prediction, 2, greedy_pred.unsqueeze(-1)).squeeze()
-    score = get_score(train_worker, scorer, greedy_pred, trg_caption, prediction_mask, segments).to(device)
+    score = get_score(train_worker, scorer, greedy_pred, trg_caption, mask, segments).to(device)
     #dist_factor = F.sigmoid((score * torch.exp(log_probs)) * 3)#TODO just testing
     #biased_ampl = dist_factor * trg_factor
-    biased_ampl = F.sigmoid(score) * torch.exp(log_probs) * trg_factor
+
+    test_print(torch.min(score))
+    test_print(torch.max(score))
+    test_print(f'NaNs: {torch.sum(score != score)}')
+
+
+    norm_reward_factor = torch.sum(mask, dim=-1)
+    norm_reward_factor = torch.reshape(norm_reward_factor, (-1,1))
+    biased_ampl = torch.clamp(score, 0,1) * torch.exp(log_probs) * trg_factor# * norm_reward_factor.float()
+
+
+    
 
     test_print(torch.max(biased_ampl))
     test_print(torch.mean(biased_ampl))
@@ -356,7 +511,8 @@ def sample_loss_kl(train_worker, prediction, scorer, expected_scores, trg, trg_c
 
     divergence = kl_div(pred, dist)
 
-    return divergence, [score], [greedy_pred]
+    return divergence, [score], [greedy_pred], [biased_ampl]
+
 
 
 def sample_loss(train_worker, prediction, scorer, expected_scores, trg, trg_caption, prediction_mask, segments, n_samples, device):
@@ -397,7 +553,7 @@ def sample_loss(train_worker, prediction, scorer, expected_scores, trg, trg_capt
     
     return losses, scores, samples
 
-def log_iteration(loader, pred, trg, score, score_pred):
+def log_iteration(loader, pred, trg, score, score_pred, amplitude, segments, train_worker):
     B,L = pred.shape
     test_print(f'Summed Score: {torch.sum(score)}')
 
@@ -406,22 +562,25 @@ def log_iteration(loader, pred, trg, score, score_pred):
         test_print(f'Trg[{b}]: {test_sentence(loader, trg[b])}')#TODO this doesnt show up?
         test_print(f'Score[{b}]: {score[b]}')
         test_print(f'Score_pred[{b}]: {score_pred[b]}')
+        if train_worker:
+            test_print(f'Ampl[{b}]: {amplitude[b]}')
+        test_print(f'Segm[{b}]: {segments[b]}')
 
 
-def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
+def train_bmhrl_bl(cfg, models, scorer, loader, epoch, log_prefix, TBoard, train_worker):
     cap_model, cap_optimizer, cap_criterion = models["captioning"]
     wv_model, wv_optimizer, wv_criterion = models["worker"]
     mv_model, mv_optimizer, mv_criterion = models["manager"]
 
-    kl_div = nn.KLDivLoss(reduction="sum")
+    kl_div = nn.KLDivLoss(reduction="none")
 
     cap_model.train()#.cuda()
     loader.dataset.update_iterator()
     train_total_loss = 0
 
     device = get_device(cfg)
+    #train_worker = False #---------------------------------------------------TODO REMOVE
     
-    #train_worker = True #---------------------------------------------------TODO REMOVE
     if train_worker:
         wv_model.train()
         cap_model.module.teach_worker()
@@ -435,7 +594,7 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
         value_optimizer = mv_optimizer
         value_criterion = mv_criterion
 
-    progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
+    progress_bar_name = f'{log_prefix} | {cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
 
     for i, batch in enumerate(tqdm(loader, desc=progress_bar_name)):
         cap_optimizer.zero_grad()
@@ -448,6 +607,9 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
         masks = make_masks(batch['feature_stacks'], caption_idx, cfg.modality, loader.dataset.pad_idx)
 
         V, A = src['rgb'] + src['flow'], src['audio']
+
+        #with autograd.detect_anomaly():
+            
         prediction, worker_feat, manager_feat, goal_feat, segment_labels = cap_model((V,A), caption_idx, masks)
 
         loss_mask = (caption_idx_y != 1)
@@ -461,18 +623,25 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
         token_mask = (caption_idx_y != loader.dataset.pad_idx)
         n_tokens = token_mask.sum()
 
-        losses, scores, samples = sample_loss_kl(train_worker=train_worker, prediction=prediction, scorer=scorer, expected_scores=expected_value.detach(), trg=caption_idx_y, trg_caption=batch['captions'],
-            prediction_mask=loss_mask, segments = segment_labels, device=device, pad_idx=loader.dataset.pad_idx, kl_div=kl_div)
-     
+        #try:
+        losses, scores, samples, amplitude = sample_loss_kl(train_worker=train_worker, prediction=prediction, scorer=scorer, expected_scores=expected_value.detach(), trg=caption_idx_y, trg_caption=batch['captions'],
+            mask=loss_mask, segments = segment_labels, device=device, pad_idx=loader.dataset.pad_idx, kl_div=kl_div)
+
+        #losses, scores, samples, amplitude = normed_kl(train_worker=train_worker, prediction=prediction, scorer=scorer, expected_scores=expected_value.detach(), trg=caption_idx_y, trg_caption=batch['captions'],
+        #   mask=loss_mask, segments = segment_labels, device=device, pad_idx=loader.dataset.pad_idx, kl_div=kl_div)
+    
         #log_l = torch.gather(prediction, 2, torch.unsqueeze(caption_idx_y,-1)).squeeze()
 
         # ------------cap loss--------------
         #cap_loss = torch.sum(losses, -1)
         #cap_loss = torch.mean(cap_loss, -1)
         #cap_loss = torch.mean(cap_loss, -1)
-        cap_loss = losses / n_tokens
+        cap_loss = torch.sum(losses) / n_tokens# if train_worker else torch.sum(losses)
+        test_print(f'Loss: {cap_loss.item()}')
         cap_loss.backward()
         cap_optimizer.step()
+        #except Exception as e:
+        #    test_print(str(e))
 
         if cfg.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(cap_model.parameters(), cfg.grad_clip)
@@ -491,13 +660,13 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
 
         #--------test logs ----------
         if (i % 100) == 0:
-            log_iteration(loader, samples[0], caption_idx_y, score, expected_value)
+            log_iteration(loader, samples[0], caption_idx_y, score, expected_value, amplitude[0], segment_labels, train_worker)
 
             start_idx = loader.dataset.start_idx
             end_idx = loader.dataset.end_idx
             pad_idx = loader.dataset.pad_idx
 
-            greedy = bmhrl_greedy_decoder(cap_model, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
+            greedy = bmhrl_greedy_decoder(cap_model.module, src, cfg.max_len, start_idx, end_idx, pad_idx, cfg.modality)
             test_print(f'Greedy Decoder: {test_sentence(loader, greedy[0])}')
 
     train_total_loss_norm = train_total_loss / len(loader)
@@ -506,7 +675,7 @@ def train_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard, train_worker):
         TBoard.add_scalar('debug/train_loss_epoch', train_total_loss_norm, epoch)
         TBoard.add_scalar('debug/lr', get_lr(cap_optimizer), epoch)
 
-def warmstart_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard):
+def warmstart_bmhrl_bl(cfg, models, scorer, loader, epoch, log_prefix, TBoard):
     cap_model, cap_optimizer, cap_criterion = models["captioning"]
     wv_model, wv_optimizer, wv_criterion = models["worker"]
     mv_model, mv_optimizer, mv_criterion = models["manager"]
@@ -516,7 +685,7 @@ def warmstart_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard):
     mv_model.train()
     loader.dataset.update_iterator()
     train_total_loss = 0
-    progress_bar_name = f'{cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
+    progress_bar_name = f'{log_prefix} | {cfg.curr_time[2:]}: train {epoch} @ {cfg.device}'
 
     cap_model.module.teach_warmstart()
 
@@ -539,10 +708,10 @@ def warmstart_bmhrl_bl(cfg, models, scorer, loader, epoch, TBoard):
 
         V, A = src['rgb'] + src['flow'], src['audio']
         prediction, worker_feat, manager_feat, goal_feat, segment_labels = cap_model((V,A), caption_idx, masks)
-
+        prediction = torch.log(prediction)#TODO dont double log - careful
         token_mask = (caption_idx_y != loader.dataset.pad_idx)
         n_tokens = token_mask.sum()
-        loss = cap_criterion(prediction, caption_idx_y) / n_tokens
+        loss = torch.sum(cap_criterion(prediction, caption_idx_y)) / n_tokens
         loss.backward()
         cap_optimizer.step()
 

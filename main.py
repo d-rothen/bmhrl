@@ -1,6 +1,7 @@
 import argparse
 from pprint import pprint
 from scripts.test_model import test_rl_cap
+from sample.single_vid_bmhrl import predict
 
 from utilities.config_constructor import Config
 from scripts.train_captioning_module import train_cap
@@ -24,7 +25,7 @@ def main(cfg):
     elif cfg.procedure == 'test_critic':
         run_critic_test(cfg)
     elif cfg.procedure == 'test_rl_cap':
-        test_rl_cap(cfg)
+        predict(cfg)
     else:
         raise NotImplementedError
 

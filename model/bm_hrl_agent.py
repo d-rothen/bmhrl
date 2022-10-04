@@ -308,6 +308,7 @@ class BMManager(nn.Module):
 
     def expand_goals(self, x, segment_mask):
         B, seq_len, d = x.shape
+
         for b in range(B):
             goal = x[b][0]
             for l in torch.arange(seq_len)[:-1]:
@@ -345,6 +346,7 @@ class BMWorker(nn.Module):
         self.projection = nn.Linear(in_features=d_in+d_goal, out_features=voc_size)
         self.goal_attention = MultiheadedAttention(d_goal, d_in, d_in, heads, dout_p, d_model)
         self.logsoftmax = nn.LogSoftmax(dim=-1)
+        self.softmax = nn.Softmax(dim=-1)
         #self.dropout = nn.Dropout(dout_p)
         #self.norm = nn.LayerNorm()
 
@@ -400,6 +402,9 @@ class BMHrlAgent(nn.Module):
         self.warmstarting = True
         self.teaching_worker = True
 
+        self.worker_modules = [self.bm_enc, self.bm_worker_fus, self.worker]
+        self.manager_modules = [self.bm_manager_fus, self.manager]
+
 
     def save_model(self, checkpoint_dir):
         model_file_name =  checkpoint_dir + f"/{self.name}.pt"
@@ -421,6 +426,12 @@ class BMHrlAgent(nn.Module):
         for name, param in self.bm_manager_fus.named_parameters():
             param.requires_grad = enabled
 
+    def _set_module_grads(self, modules, enable):
+        for module in modules:
+            for name, param in module.named_parameters():
+                param.requires_grad = enable
+
+
     def teach_warmstart(self):
         self.warmstarting = True
         self._set_worker_grad(True)
@@ -429,15 +440,15 @@ class BMHrlAgent(nn.Module):
     def teach_worker(self):
         self.warmstarting = False
         self.teaching_worker = True
-        self._set_worker_grad(True)
-        self._set_manager_grad(False)
+        self._set_module_grads(self.worker_modules, True)
+        self._set_module_grads(self.manager_modules, False)
         self.manager.exploration = False
 
     def teach_manager(self):
         self.warmstarting = False
         self.teaching_worker = False
-        self._set_manager_grad(True)
-        self._set_worker_grad(False)
+        self._set_module_grads(self.worker_modules, False)
+        self._set_module_grads(self.manager_modules, True)
         self.manager.exploration = True
 
     def set_inference_mode(self, inference):
@@ -447,17 +458,15 @@ class BMHrlAgent(nn.Module):
             self.manager.exploration = True
 
     def warmstart(self, x, trg, mask):
-        prediction = self.pred_log_softmax(x, trg, mask)
-        #score = self.scorer.delta_meteor(torch.argmax(prediction, -1), text, mask["C_mask"][:,-1])
-        #cat = Categorical(prediction)
-        return prediction
+        prediction = self.prediction(x, trg, mask)
+        return prediction#TODO dont double log 
 
         probability = torch.gather(prediction, 2, torch.unsqueeze(trg,-1)).squeeze()
 
         return torch.gather(prediction, 2, torch.unsqueeze(trg[:,1:],-1)).squeeze()#this will start with <s>
 
 
-    def pred_log_softmax(self, x, trg, mask):#TODO rename, not log softmax but plain output
+    def prediction(self, x, trg, mask):#TODO rename, not log softmax but plain output
         x_video, x_audio = x
 
         C = self.emb_C(trg)
@@ -477,14 +486,16 @@ class BMHrlAgent(nn.Module):
         worker_feat = self.bm_worker_fus((C, (Av, Va)), mask)
         manager_feat = self.bm_manager_fus((C, (Av, Va)), mask)
 
-        goals = self.manager(manager_feat, segment_labels)
-        return self.worker(worker_feat, goals, mask["C_mask"]), worker_feat, manager_feat, goals, segment_labels
+        goals = self.manager(manager_feat, segment_labels)#torch.reshape(segment_labels, (1,-1)))#TODO remove!!
+        pred = self.worker(worker_feat, goals, mask["C_mask"])
+
+        return pred, worker_feat, manager_feat, goals, segment_labels
 
     def inference(self, x, trg, mask):
-        return self.pred_log_softmax(x, trg, mask)[0]
+        return self.prediction(x, trg, mask)[0]
 
     def forward(self, x, trg, mask):
-        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.pred_log_softmax(x, trg, mask)
+        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.prediction(x, trg, mask)
 
         return prediction, worker_feat, manager_feat, goal_feat, segment_labels
         for i in range(self.max_len):

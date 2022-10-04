@@ -29,4 +29,4 @@ class LabelSmoothing(nn.Module):
             # dim, index, val
             dist.index_fill_(0, mask.squeeze(), 0) #set distance 0 where there are padding tokens
             
-        return F.kl_div(pred, dist, reduction='sum')
+        return F.kl_div(pred, dist, reduction='none')

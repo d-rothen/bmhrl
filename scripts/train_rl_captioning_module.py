@@ -117,7 +117,7 @@ def train_rl_cap(cfg):
 
     is_warmstart = cfg.rl_warmstart_epochs > 0
 
-    alternate_training_switch = True#Start with Manager
+    alternate_training_switch = False#Start with Manager
     
     learning_rate_validation = False
 
@@ -131,9 +131,11 @@ def train_rl_cap(cfg):
 
     #bmhrl_test(cfg, model, train_loader)
 
-    metrics_avg = eval_model(cfg, model, (val_2_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
+    #metrics_avg = eval_model(cfg, model, (val_2_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
     #print(f"Meteor#{metrics_avg['METEOR']}", file=sys.stderr)
     #return
+
+    log_prefix = "METEOR@?"
 
     for epoch in range(cfg.epoch_num):
         print(f'The best metrict was unchanged for {num_epoch_best_metric_unchanged} epochs.')
@@ -161,11 +163,11 @@ def train_rl_cap(cfg):
         if is_warmstart:#0:
             print(f"Warmstarting HRL agent #{str(epoch)}", file=sys.stderr)
             #warmstart_bmhrl_2(cfg, model, train_loader, optimizer, epoch, criterion, TBoard)
-            warmstart_bmhrl_bl(cfg, models, scorer, train_loader, epoch, TBoard)
+            warmstart_bmhrl_bl(cfg, models, scorer, train_loader, epoch, log_prefix, TBoard)
         else:
             #TODO log here for error?
             #rl_likelyhood(cfg, model, train_loader, optimizer, epoch, alternate_training_switch, TBoard)#TODO just train worker for now
-            train_bmhrl_bl(cfg, models, scorer, train_loader, epoch, TBoard, alternate_training_switch)
+            train_bmhrl_bl(cfg, models, scorer, train_loader, epoch, log_prefix, TBoard, alternate_training_switch)
 
         #model.module.set_inference_mode(True)
         
@@ -197,7 +199,7 @@ def train_rl_cap(cfg):
 
             # validation with g.t. proposals
             metrics_avg = eval_model(cfg, model, (val_1_loader, 0), bmhrl_greedy_decoder, epoch, TBoard)
-
+            log_prefix = f"METEOR@{metrics_avg['METEOR'] * 100}"
             # saving the model if it is better than the best so far
             if best_metric < metrics_avg['METEOR']:
                 best_metric = metrics_avg['METEOR']

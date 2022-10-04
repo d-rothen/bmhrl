@@ -77,6 +77,7 @@ class MeteorScorer():
 
         delta_meteor_step_reward = self.delta_meteor_step(pred, trg, mask, gamma_matrix)
 
+        sections[:,0] = 1#Set section delimiter so first sectioons doesnt disappear
         delta_meteor_section_reward = self.delta_meteor_segment(delta_meteor_step_reward, sections, gamma_matrix)
         return delta_meteor_step_reward, delta_meteor_section_reward
 
@@ -94,6 +95,7 @@ class MeteorScorer():
         return gammas
 
     def get_gamma_matrix(self, gamma, B, L):
+        #start at 1
         gamma_exp = torch.arange(L, dtype=torch.float32).repeat((B,1))
         gamma_mat = gamma**gamma_exp
 
