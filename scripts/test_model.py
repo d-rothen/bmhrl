@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
-from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl, train_bmhrl_bl, warmstart_bmhrl, warmstart_bmhrl_2, warmstart_bmhrl_bl
+from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl_bl, warmstart_bmhrl_bl
 from loss.rl_label_smoothing import RlLabelSmoothing
 from metrics.batched_meteor import MeteorScorer
 from model.bm_hrl_agent import BMHrlAgent, BMManagerValueFunction, BMWorkerValueFunction

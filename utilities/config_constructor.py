@@ -32,6 +32,7 @@ class Config(object):
         self.pad_token = args.pad_token
         self.max_len = args.max_len
         self.min_freq_caps = args.min_freq_caps
+        self.mode = args.mode
 
         # model
         self.pretrained_cap_model_path = args.pretrained_cap_model_path

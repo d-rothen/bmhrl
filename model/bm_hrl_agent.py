@@ -146,6 +146,58 @@ class BMFusion(nn.Module):
 
         return C
 
+class UnimodalFusion(nn.Module):
+    def __init__(self, d_model_M1, d_model_C, d_model, d_ff_c, dout_p, H, N) -> None:
+        super(UnimodalFusion, self).__init__()
+        layer = UnimodalFusionLayer(
+            d_model_M1, d_model_C, d_model, d_ff_c, dout_p, H
+        )
+        self.decoder = LayerStack(layer, N)
+
+    def forward(self, x, masks):
+        C, memory = self.decoder(x, masks)
+
+        return C
+
+class UnimodalFusionLayer(nn.Module):
+    def __init__(self, d_model_M1, d_model_C, d_model, d_ff_c, dout_p, H) -> None:
+        super(UnimodalFusionLayer, self).__init__()
+        self.res_layer_self_att = ResidualConnection(d_model_C, dout_p)
+        self.self_att = MultiheadedAttention(d_model_C, d_model_C, d_model_C, H, dout_p, d_model)
+
+        self.res_layer_enc_att = ResidualConnection(d_model_C, dout_p)
+        
+        self.enc_att = MultiheadedAttention(d_model_C, d_model_M1, d_model_M1, H, dout_p, d_model)
+
+        self.feed_forward = PositionwiseFeedForward(d_model_C, d_ff_c, dout_p)
+
+        self.normC = nn.LayerNorm(d_model_C)
+
+
+    def forward(self, x, masks):
+        '''
+        Inputs:
+            x (C, memory): C: (B, Sc, Dc) 
+                           memory: (Av: (B, Sa, Da), Va: (B, Sv, Dv))
+            masks (V_mask: (B, 1, Sv); A_mask: (B, 1, Sa); C_mask (B, Sc, Sc))
+        Outputs:
+            x (C, memory): C: (B, Sc, Dc) 
+                           memory: (Av: (B, Sa, Da), Va: (B, Sv, Dv))
+        '''
+        C, memory = x
+        M1 = memory
+
+        m1_mask, c_mask = masks
+
+        def sublayer_self_att(C): return self.self_att(C, C, C, c_mask)
+        def sublayer_enc_att(C): return self.enc_att(C, M1, M1, m1_mask)
+
+        C = self.res_layer_self_att(C, sublayer_self_att)
+        Cm = self.res_layer_enc_att(C, sublayer_enc_att)
+        Cm = self.normC(Cm)
+
+        return Cm, memory
+
 class SegmentCritic(nn.Module):
     def __init__(self, cfg):
         super(SegmentCritic, self).__init__()
@@ -200,6 +252,20 @@ class BMEncoder(nn.Module):
 
         return (Av, Va)
 
+class UnimodalEncoder(nn.Module):
+    def __init__(self, d_model_M1, d_model, d_ff_M1, dout_p, H, N) -> None:
+        super(UnimodalEncoder, self).__init__()
+        enc_layer = UnimodalEncoderLayer(d_model_M1, d_model, d_ff_M1, dout_p, H)
+        self.encoder = LayerStack(enc_layer, N)
+
+
+    def forward(self, x, mask):
+
+        # M1m2 (B, Sm1, D), M2m1 (B, Sm2, D) <-
+        x= self.encoder(x, mask)
+
+        return x
+
 class BMWorkerValueFunction(ModelBase):
     def __init__(self, cfg) -> None:
         super(BMWorkerValueFunction, self).__init__("bm_worker_value_function")
@@ -238,6 +304,43 @@ class BMManagerValueFunction(ModelBase):
         predicted_value = self.activation(predicted_value)
         predicted_value = self.projection(predicted_value)
         return predicted_value#self.scaler(predicted_value)
+
+class UnimodalEncoderLayer(nn.Module):
+
+    def __init__(self, d_M1, d_model, d_ff_M1, dout_p, H):
+        super(UnimodalEncoderLayer, self).__init__()
+        self.self_att_M1 = MultiheadedAttention(d_M1, d_M1, d_M1, H, dout_p, d_model)
+
+        #With Nonlinearity
+        self.feed_forward_M1 = PositionwiseFeedForward(d_M1, d_ff_M1, dout_p)
+
+        self.res_layers_M1 = clone(ResidualConnection(d_M1, dout_p), 3)
+
+    def forward(self, x, masks):
+        '''
+        Inputs:
+            x (M1, M2): (B, Sm, Dm)
+            masks (M1, M2): (B, 1, Sm)
+        Output:
+            M1m2 (B, Sm1, Dm1), M2m1 (B, Sm2, Dm2),
+        '''
+        M1 = x
+        M1_mask = masks
+
+        # sublayer should be a function which inputs x and outputs transformation
+        # thus, lambda is used instead of just `self.self_att(x, x, x)` which outputs
+        # the output of the self attention
+        def sublayer_self_att_M1(M1): return self.self_att_M1(M1, M1, M1, M1_mask)
+        sublayer_ff_M1 = self.feed_forward_M1
+
+        # 1. Self-Attention
+        # both (B, Sm*, Dm*)
+        M1 = self.res_layers_M1[0](M1, sublayer_self_att_M1)
+
+        M1 = self.res_layers_M1[2](M1, sublayer_ff_M1)
+
+
+        return M1
 
 class BMEncoderLayer(nn.Module):
 
@@ -402,6 +505,8 @@ class BMHrlAgent(nn.Module):
         self.warmstarting = True
         self.teaching_worker = True
 
+        self.sigmoid_epoch_offset = torch.tensor(-1)
+
         self.worker_modules = [self.bm_enc, self.bm_worker_fus, self.worker]
         self.manager_modules = [self.bm_manager_fus, self.manager]
 
@@ -465,6 +570,34 @@ class BMHrlAgent(nn.Module):
 
         return torch.gather(prediction, 2, torch.unsqueeze(trg[:,1:],-1)).squeeze()#this will start with <s>
 
+    def prediction_audio(self, x, trg, mask):
+        x_video, x_audio = x
+        C = self.emb_C(trg)
+
+        A = self.pos_enc_A(x_audio)
+
+        segments = self.critic(C)
+        segment_labels = (torch.sigmoid(segments) > self.critic_score_threshhold).squeeze().int()
+
+        C = self.pos_enc_C(C)
+
+    def mixed_prediction(self, x, trgs, mask, mix_factor):
+        x_video, x_audio = x
+        y_trg, yhat_trg = trgs
+
+        yhat_factor = mix_factor
+        y_factor = 1 - mix_factor
+
+        C = self.emb_C(y_trg) * y_factor
+        C_hat = self.emb_C(yhat_trg) * yhat_factor
+        C_mixed = C + C_hat
+
+        V = self.pos_enc_V(x_video)
+        A = self.pos_enc_A(x_audio)
+
+        return self.predict_with_features(C_mixed,V,A, mask)
+        
+
 
     def prediction(self, x, trg, mask):#TODO rename, not log softmax but plain output
         x_video, x_audio = x
@@ -474,6 +607,11 @@ class BMHrlAgent(nn.Module):
         V = self.pos_enc_V(x_video)
         A = self.pos_enc_A(x_audio)
 
+        return self.predict_with_features(C,V,A, mask)
+
+
+
+    def predict_with_features(self, C,V,A, mask):
         segments = self.critic(C)
         segment_labels = (torch.sigmoid(segments) > self.critic_score_threshhold).squeeze().int()
 
@@ -494,8 +632,8 @@ class BMHrlAgent(nn.Module):
     def inference(self, x, trg, mask):
         return self.prediction(x, trg, mask)[0]
 
-    def forward(self, x, trg, mask):
-        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.prediction(x, trg, mask)
+    def forward(self, x, trg, mask, factor=1):
+        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.mixed_prediction(x, trg, mask, factor) if type(trg) is tuple else self.prediction(x, trg, mask)
 
         return prediction, worker_feat, manager_feat, goal_feat, segment_labels
         for i in range(self.max_len):
@@ -533,8 +671,149 @@ class BMHrlAgent(nn.Module):
             word_index += 1
         return likelyhood
 
+class UnimodalAgent(nn.Module):
+    def __init__(self, cfg, train_dataset, d_m1, d_ff_m1):
+        super(UnimodalAgent, self).__init__()
+        self.name = "unimodal_hrl_agent"
+        self.d_m1 = d_m1
+
+        self.d_proj = cfg.rl_projection_d
+        self.d_model_caps = cfg.d_model_caps
+        self.d_model = cfg.d_model
+        self.att_heads = cfg.rl_att_heads
+        self.att_layers = cfg.rl_att_layers
+        self.dout_p = cfg.dout_p
+        self.d_goal = cfg.rl_goal_d
+        self.voc_size = train_dataset.trg_voc_size
+        self.device = get_device(cfg)
+
+        self.critic_score_threshhold =cfg.rl_critic_score_threshhold
+
+        self.pos_enc = PositionalEncoder(self.d_m1, cfg.dout_p)
+
+        self.pos_enc_C = PositionalEncoder(cfg.d_model_caps, cfg.dout_p)
+
+        self.critic = SegmentCritic(cfg)
+
+        self.emb_C = VocabularyEmbedder(train_dataset.trg_voc_size, cfg.d_model_caps)
+        self.emb_C.init_word_embeddings(train_dataset.train_vocab.vectors, cfg.unfreeze_word_emb)
+
+        self.uni_enc = UnimodalEncoder(d_model_M1=self.d_m1, d_model=self.d_model, d_ff_M1=d_ff_m1, dout_p=self.dout_p, H=self.att_heads, N=self.att_layers)
+
+        self.uni_worker_fus = UnimodalFusion(
+            self.d_m1, cfg.d_model_caps, cfg.d_model, d_ff_m1, self.dout_p, 
+            self.att_heads, self.att_layers
+        )
+
+        self.uni_manager_fus = UnimodalFusion(
+            self.d_m1, cfg.d_model_caps, cfg.d_model, d_ff_m1, self.dout_p, 
+            self.att_heads, self.att_layers
+        )
+
+        self.manager = BMManager(self.device ,self.d_model_caps, self.d_goal, self.dout_p)
+        self.worker = BMWorker(voc_size=self.voc_size, d_in=self.d_model_caps, d_goal=self.d_goal, dout_p=self.dout_p, d_model=self.d_model)
+        
+        self.teach_warmstart()
+        self.warmstarting = True
+        self.teaching_worker = True
+
+        self.worker_modules = [self.uni_enc, self.uni_worker_fus, self.worker]
+        self.manager_modules = [self.uni_manager_fus, self.manager]
 
 
+    def save_model(self, checkpoint_dir):
+        model_file_name =  checkpoint_dir + f"/{self.name}.pt"
+        torch.save(self.state_dict(), model_file_name)
+
+    def load_model(self, checkpoint_dir):
+        model_file_name =  checkpoint_dir + f"/{self.name}.pt"
+        self.load_state_dict(torch.load(model_file_name))
+
+    def _set_worker_grad(self, enabled):
+        for name, param in self.worker.named_parameters():
+            param.requires_grad = enabled
+        for name, param in self.uni_worker_fus.named_parameters():
+            param.requires_grad = enabled
+
+    def _set_manager_grad(self, enabled):
+        for name, param in self.manager.named_parameters():
+            param.requires_grad = enabled
+        for name, param in self.uni_manager_fus.named_parameters():
+            param.requires_grad = enabled
+
+    def _set_module_grads(self, modules, enable):
+        for module in modules:
+            for name, param in module.named_parameters():
+                param.requires_grad = enable
 
 
+    def teach_warmstart(self):
+        self.warmstarting = True
+        self._set_worker_grad(True)
+        self._set_manager_grad(True)
 
+    def teach_worker(self):
+        self.warmstarting = False
+        self.teaching_worker = True
+        self._set_module_grads(self.worker_modules, True)
+        self._set_module_grads(self.manager_modules, False)
+        self.manager.exploration = False
+
+    def teach_manager(self):
+        self.warmstarting = False
+        self.teaching_worker = False
+        self._set_module_grads(self.worker_modules, False)
+        self._set_module_grads(self.manager_modules, True)
+        self.manager.exploration = True
+
+    def set_inference_mode(self, inference):
+        if inference:
+            self.manager.exploration = False
+        else:
+            self.manager.exploration = True
+
+    def warmstart(self, x, trg, mask):
+        prediction = self.prediction(x, trg, mask)
+        return prediction
+
+
+    def prediction(self, x, trg, mask):
+        m1_mask, c_mask = mask
+        C = self.emb_C(trg)
+
+        m1 = self.pos_enc(x)
+
+        segments = self.critic(C)
+        segment_labels = (torch.sigmoid(segments) > self.critic_score_threshhold).squeeze().int()
+
+        C = self.pos_enc_C(C)
+
+        #Self Att
+        m1 = self.uni_enc(m1, m1_mask)
+        ##
+
+        worker_feat = self.uni_worker_fus((C, m1), mask)
+        manager_feat = self.uni_manager_fus((C, m1), mask)
+
+        goals = self.manager(manager_feat, segment_labels)#torch.reshape(segment_labels, (1,-1)))#TODO remove!!
+        pred = self.worker(worker_feat, goals, c_mask)
+
+        return pred, worker_feat, manager_feat, goals, segment_labels
+
+    def inference(self, x, trg, mask):
+        return self.prediction(x, trg, mask)[0]
+
+    def forward(self, x, trg, mask):
+        prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.prediction(x, trg, mask)
+
+        return prediction, worker_feat, manager_feat, goal_feat, segment_labels
+
+
+class AudioAgent(UnimodalAgent):
+    def __init__(self, cfg, train_dataset) -> None:
+        super(AudioAgent, self).__init__(cfg, train_dataset, cfg.d_aud, cfg.rl_ff_a)
+
+
+class VideoAgent(UnimodalAgent):
+    def __init__(self, cfg, train_dataset) -> None:
+        super(VideoAgent, self).__init__(cfg, train_dataset, cfg.d_vid, cfg.rl_ff_v)

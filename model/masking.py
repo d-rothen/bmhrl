@@ -10,6 +10,10 @@ def subsequent_mask(size):
 
     return mask.byte()
 
+def c_mask(trg, pad_idx):
+    mask = (trg != pad_idx).unsqueeze(-2)
+    return mask & subsequent_mask(trg.size(-1)).type_as(mask)
+
 
 def mask(src, trg, pad_idx):
     # masking the padding. src shape: (B, S') -> (B, 1, S')

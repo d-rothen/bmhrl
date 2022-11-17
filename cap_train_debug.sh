@@ -14,4 +14,4 @@
 #SBATCH -o train_debug.out
 #SBATCH -J mdvc-train
 
-python -m debugpy --wait-for-client --listen 5999 main.py --procedure train_rl_cap --rl_warmstart_epochs 0 --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/
+python -m debugpy --wait-for-client --listen 5999 main.py --procedure train_rl_cap --mode BMHRL --rl_warmstart_epochs 0 --rl_train_worker False --B 16 --video_features_path /nas/student/DanielRothenpieler/BMT/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/student/DanielRothenpieler/BMT/data/vggish_npy/

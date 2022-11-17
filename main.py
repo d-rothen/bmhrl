@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument('--rl_gamma_manager', type=float, default=0.8, help='reward diminishing constant')
 
     parser.add_argument('--rl_pretrained_model_dir', type=str, help="pretrained rl model to use")
-    parser.add_argument('--rl_train_worker', type=bool, help="train worker or manager")
+    parser.add_argument('--rl_train_worker', type=bool, default=True, help="train worker or manager")
     parser.add_argument('--rl_warmstart_epochs', type=int, default=1, help="Epochs trained via wamrstart before starting the agent")
     parser.add_argument('--rl_projection_d', type=int, default=512, help='dimension for common projection space')
     parser.add_argument('--rl_att_heads', type=int, default=4, help='#attention heads')
@@ -65,12 +65,15 @@ if __name__ == "__main__":
     parser.add_argument('--rl_ff_c', type=int, default=2048, help='caption FF Layer dim')
     parser.add_argument('--rl_ff_v', type=int, default=1024, help='video FF Layer dim')
     parser.add_argument('--rl_ff_a', type=int, default=512, help='audio FF Layer dim')
+    
+    #Use baseline to stabilize training
+    parser.add_argument('--rl_stabilize', type=bool, default=False, help='audio FF Layer dim')
 
 
     parser.add_argument('--rl_value_function_lr', type=float, default=1e-4, help='value function lr')
     parser.add_argument('--rl_cap_warmstart_lr', type=float, default=1e-4, help='warmstart captioning lr')
     parser.add_argument('--rl_cap_lr', type=float, default=0.0001, help='warmstart captioning lr')
-
+    parser.add_argument('--mode', type=str, default='BMHRL', choices=['BMHRL', 'BM', 'AHRL', 'VHRL', 'verbose', 'eval'], help="Ablation study modes")
 
     ## Critic
 
