@@ -23,3 +23,34 @@ def mask(src, trg, pad_idx):
         return src_mask, trg_mask
     else:
         return src_mask
+
+
+def make_masks(feature_stacks, captions, modality, pad_idx):
+    masks = {}
+
+    if modality == 'video':
+        if captions is None:
+            masks['V_mask'] = mask(feature_stacks['rgb'][:, :, 0], None, pad_idx)
+        else:
+            masks['V_mask'], masks['C_mask'] = mask(feature_stacks['rgb'][:, :, 0], captions, pad_idx)
+    elif modality == 'audio':
+        assert len(feature_stacks['audio'].shape) == 3
+        if captions is None:
+            masks['A_mask'] = mask(feature_stacks['audio'][:, :, 0], None, pad_idx)
+        else:
+            masks['A_mask'], masks['C_mask'] = mask(feature_stacks['audio'][:, :, 0], captions, pad_idx)
+    elif modality == 'audio_video':
+        assert len(feature_stacks['audio'].shape) == 3
+        if captions is None:
+            masks['A_mask'] = mask(feature_stacks['audio'][:, :, 0], None, pad_idx)
+            masks['V_mask'] = mask(feature_stacks['rgb'][:, :, 0], None, pad_idx)
+        else:
+            masks['V_mask'], masks['C_mask'] = mask(feature_stacks['rgb'][:, :, 0], captions, pad_idx)
+            masks['A_mask'] = mask(feature_stacks['audio'][:, :, 0], None, pad_idx)
+    elif modality == 'subs_audio_video':
+        assert len(feature_stacks['audio'].shape) == 3
+        masks['V_mask'], masks['C_mask'] = mask(feature_stacks['rgb'][:, :, 0], captions, pad_idx)
+        masks['A_mask'] = mask(feature_stacks['audio'][:, :, 0], None, pad_idx)
+        masks['S_mask'] = mask(feature_stacks['subs'], None, pad_idx)
+
+    return masks

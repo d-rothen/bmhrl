@@ -1,16 +1,25 @@
-from distutils.archive_util import make_archive
-from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from metrics.batched_meteor import MeteorScorer
-from torch.distributions import Categorical
 
+# Provided by Iashin and Rahtu at https://github.com/v-iashin/BMT
 from model.blocks import LayerStack, PositionalEncoder, PositionwiseFeedForward, ResidualConnection, VocabularyEmbedder, clone
-from model.encoders import BiModalEncoder
-from model.hrl_agent import AReLU
 from model.multihead_attention import MultiheadedAttention
+# ---------------------------------------------------------------
 from scripts.device import get_device
+
+class AReLU(nn.Module):
+    def __init__(self, alpha=0.90, beta=2.0):
+        super(AReLU, self).__init__()
+        self.alpha = nn.Parameter(torch.tensor([alpha]))
+        self.beta = nn.Parameter(torch.tensor([beta]))
+
+    def forward(self, input):
+        alpha = torch.clamp(self.alpha, min=0.01, max=0.99)
+        beta = 1 + torch.sigmoid(self.beta)
+
+        return F.relu(input) * beta - F.relu(-input) * alpha
+
 
 class ModelBase(nn.Module):
     def __init__(self, name) -> None:
@@ -427,7 +436,7 @@ class BMManager(nn.Module):
         #Select only Segment Goals, goals between segments are discarded
 
         if self.exploration:
-            std, mean = torch.std_mean(x) #Could be SUPER volatile
+            std, mean = torch.std_mean(x)
             std /= self.std_factor
             mean /= self.mean_factor
             std = std.detach()
@@ -450,8 +459,7 @@ class BMWorker(nn.Module):
         self.goal_attention = MultiheadedAttention(d_goal, d_in, d_in, heads, dout_p, d_model)
         self.logsoftmax = nn.LogSoftmax(dim=-1)
         self.softmax = nn.Softmax(dim=-1)
-        #self.dropout = nn.Dropout(dout_p)
-        #self.norm = nn.LayerNorm()
+
 
     def forward(self, x, goal, mask):
         goal_completion = self.goal_attention(goal, x, x, mask)
@@ -564,11 +572,7 @@ class BMHrlAgent(nn.Module):
 
     def warmstart(self, x, trg, mask):
         prediction = self.prediction(x, trg, mask)
-        return prediction#TODO dont double log 
-
-        probability = torch.gather(prediction, 2, torch.unsqueeze(trg,-1)).squeeze()
-
-        return torch.gather(prediction, 2, torch.unsqueeze(trg[:,1:],-1)).squeeze()#this will start with <s>
+        return prediction
 
     def prediction_audio(self, x, trg, mask):
         x_video, x_audio = x
@@ -599,7 +603,7 @@ class BMHrlAgent(nn.Module):
         
 
 
-    def prediction(self, x, trg, mask):#TODO rename, not log softmax but plain output
+    def prediction(self, x, trg, mask):
         x_video, x_audio = x
 
         C = self.emb_C(trg)
@@ -624,7 +628,7 @@ class BMHrlAgent(nn.Module):
         worker_feat = self.bm_worker_fus((C, (Av, Va)), mask)
         manager_feat = self.bm_manager_fus((C, (Av, Va)), mask)
 
-        goals = self.manager(manager_feat, segment_labels)#torch.reshape(segment_labels, (1,-1)))#TODO remove!!
+        goals = self.manager(manager_feat, segment_labels)
         pred = self.worker(worker_feat, goals, mask["C_mask"])
 
         return pred, worker_feat, manager_feat, goals, segment_labels
@@ -636,40 +640,6 @@ class BMHrlAgent(nn.Module):
         prediction, worker_feat, manager_feat, goal_feat, segment_labels = self.mixed_prediction(x, trg, mask, factor) if type(trg) is tuple else self.prediction(x, trg, mask)
 
         return prediction, worker_feat, manager_feat, goal_feat, segment_labels
-        for i in range(self.max_len):
-            if i >= (L-1) or torch.all(completion_mask):
-                break
-
-            last_word = gt_embeddings[:,word_index-1,:]
-            desired_word_index = gts[:,word_index]
-            worker_ctx = self.worker_context_atn(low_level_features, last_w_h)
-
-            next_word, (w_h, w_c) = self.worker(goal, worker_ctx, last_word)
-            worker_baseline = self.worker_baseline_estimator(w_h).squeeze()#TODO Cut gradient from worker from baseline
-
-            distribution = Categorical(next_word)
-            #See how likely groudntruth would have occured
-            likelyhood[:,word_index] = torch.gather(distribution.probs, 1, torch.unsqueeze(desired_word_index,-1)).squeeze()#this will start with <s>
-
-            eos = desired_word_index == self.end_index
-            completion_mask = completion_mask | eos
-
-            iteration_labels = segment_labels[:,word_index]
-
-            persistent_goal_factor = (~iteration_labels.bool()).int().repeat(self.d_goal, 1).T.float()
-            new_goal_factor = iteration_labels.repeat(self.d_goal, 1).T.float()
-
-            persistent_goals = persistent_goal_factor * goal
-
-            manager_ctx = self.manager_context_atn(high_level_features, last_m_h)
-            next_goal, (m_h, m_c) = self.manager(manager_ctx, w_h.squeeze())#TODO critic and lastgoal
-
-            last_w_h = w_h.squeeze()
-            last_m_h = m_h.squeeze()
-            goal = persistent_goals + new_goal_factor * next_goal.squeeze()
-            #Append next word(s)
-            word_index += 1
-        return likelyhood
 
 class UnimodalAgent(nn.Module):
     def __init__(self, cfg, train_dataset, d_m1, d_ff_m1):
@@ -689,6 +659,7 @@ class UnimodalAgent(nn.Module):
 
         self.critic_score_threshhold =cfg.rl_critic_score_threshhold
 
+        #
         self.pos_enc = PositionalEncoder(self.d_m1, cfg.dout_p)
 
         self.pos_enc_C = PositionalEncoder(cfg.d_model_caps, cfg.dout_p)

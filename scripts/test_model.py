@@ -4,8 +4,6 @@ import torch
 from torch.utils import tensorboard as tensorboard
 from torch.utils.data import DataLoader
 from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl_bl, warmstart_bmhrl_bl
-from loss.rl_label_smoothing import RlLabelSmoothing
-from metrics.batched_meteor import MeteorScorer
 from model.bm_hrl_agent import BMHrlAgent, BMManagerValueFunction, BMWorkerValueFunction
 from utilities.learning import adjust_optimizer_lr
 from utilities.out_log import print_to_file as print_log

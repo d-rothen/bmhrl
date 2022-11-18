@@ -1,33 +1,11 @@
 import argparse
 from pprint import pprint
-from scripts.test_model import test_rl_cap
-from sample.single_vid_bmhrl import predict
 
 from utilities.config_constructor import Config
-from scripts.train_captioning_module import train_cap
 from scripts.train_rl_captioning_module import train_rl_cap
-from scripts.train_proposal_generator import train_prop
-from scripts.eval_on_learned_props import eval_on_learned_props
-from scripts.train_critic import train_critic
-from sample.critic_test import run_critic_test
 
 def main(cfg):
-    if cfg.procedure == 'train_cap':
-        train_cap(cfg)
-    elif cfg.procedure == 'train_rl_cap':
-        train_rl_cap(cfg)
-    elif cfg.procedure == 'train_prop':
-        train_prop(cfg)
-    elif cfg.procedure == 'evaluate':
-        eval_on_learned_props(cfg)
-    elif cfg.procedure == 'train_critic':
-        train_critic(cfg)
-    elif cfg.procedure == 'test_critic':
-        run_critic_test(cfg)
-    elif cfg.procedure == 'test_rl_cap':
-        predict(cfg)
-    else:
-        raise NotImplementedError
+    train_rl_cap(cfg)
 
 
 if __name__ == "__main__":
@@ -67,7 +45,7 @@ if __name__ == "__main__":
     parser.add_argument('--rl_ff_a', type=int, default=512, help='audio FF Layer dim')
     
     #Use baseline to stabilize training
-    parser.add_argument('--rl_stabilize', type=bool, default=False, help='audio FF Layer dim')
+    parser.add_argument('--rl_stabilize', type=bool, default=False, help='stabilize rl training')
 
 
     parser.add_argument('--rl_value_function_lr', type=float, default=1e-4, help='value function lr')
@@ -110,9 +88,6 @@ if __name__ == "__main__":
     parser.add_argument('--train_json_path', type=str, default='./data/train.json')
     parser.add_argument('--train_segment_json_path', type=str, default='./data/CharadeCaptions/charades_captions.json')
 
-    ## TRAINING
-    parser.add_argument('--procedure', type=str, required=True, 
-                        choices=['train_cap', 'train_rl_cap', 'train_prop', 'evaluate', 'train_seg', 'test_critic', 'test_rl_cap'])
     parser.add_argument('--device_ids', type=int, nargs='+', default=[0], help='separated by a whitespace')
     parser.add_argument('--start_token', type=str, default='<s>', help='starting token')
     parser.add_argument('--end_token', type=str, default='</s>', help='ending token')
@@ -219,6 +194,10 @@ if __name__ == "__main__":
                         help='intermediate layer dims in proposal gen heads')
     parser.add_argument('--layer_norm', dest='layer_norm', action='store_true', default=False, 
                         help='whether to use layer norm in proposal generation heads')
+
+    parser.add_argument('--procedure', type=str, required=True, 
+        choices=['train_rl_cap'])
+
 
 
     ## DEBUGGING

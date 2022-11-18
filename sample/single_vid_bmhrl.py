@@ -9,19 +9,13 @@ from torch.utils.data import DataLoader
 import sys
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from epoch_loops.captioning_bmrl_loops import bmhrl_greedy_decoder, bmhrl_inference, bmhrl_test, bmhrl_validation_next_word_loop, train_bmhrl_bl, warmstart_bmhrl_bl
-from loss.rl_label_smoothing import RlLabelSmoothing
-from metrics.batched_meteor import MeteorScorer
-from model.bm_hrl_agent import BMHrlAgent, BMManagerValueFunction, BMWorkerValueFunction
+from model.bm_hrl_agent import BMHrlAgent
 from utilities.out_log import print_to_file as print_log
 
-from metrics.validation import MeteorCriterion
 from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop, warmstart, rl_likelyhood)
-from loss.label_smoothing import LabelSmoothing
-from model.captioning_module import BiModalTransformer, Transformer
 from scripts.device import get_device
 from utilities.captioning_utils import average_metrics_in_two_dicts, timer
 from utilities.config_constructor import Config
-from model.hrl_agent import HRLAgent
 from pathlib import Path
 from utilities.folders import get_model_checkpoint_dir
 
@@ -30,7 +24,6 @@ from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 # from datasets.load_features import load_features_from_npy
 from captioning_datasets.load_features import crop_a_segment, pad_segment
 from epoch_loops.captioning_epoch_loops import make_masks
-from model.captioning_module import BiModalTransformer
 from model.proposal_generator import MultimodalProposalGenerator
 from utilities.proposal_utils import (get_corner_coords,
                                       remove_very_short_segments,

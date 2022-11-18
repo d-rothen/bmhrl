@@ -38,95 +38,46 @@ class Config(object):
         self.pretrained_cap_model_path = args.pretrained_cap_model_path
         #rl agent
 
-        #--
-        if args.procedure == 'train_rl_cap' or args.procedure == 'test_critic' or args.procedure == 'test_rl_cap':
-            self.rl_low_level_enc_d = args.rl_low_level_enc_d
-            self.rl_high_level_enc_d = args.rl_high_level_enc_d
+        self.rl_low_level_enc_d = args.rl_low_level_enc_d
+        self.rl_high_level_enc_d = args.rl_high_level_enc_d
 
-            self.rl_worker_lstm = args.rl_worker_lstm
-            
-            self.rl_manager_lstm = args.rl_manager_lstm
-            
-            self.rl_goal_d = args.rl_goal_d
-            self.rl_attn_d = args.rl_attn_d
-            
-            self.rl_critic_path = args.rl_critic_path
-            self.rl_critic_score_threshhold = args.rl_critic_score_threshhold
+        self.rl_worker_lstm = args.rl_worker_lstm
+        
+        self.rl_manager_lstm = args.rl_manager_lstm
+        
+        self.rl_goal_d = args.rl_goal_d
+        self.rl_attn_d = args.rl_attn_d
+        
+        self.rl_critic_path = args.rl_critic_path
+        self.rl_critic_score_threshhold = args.rl_critic_score_threshhold
 
-            self.word_emb_caps = args.word_emb_caps
-            self.unfreeze_word_emb = args.unfreeze_word_emb
-            self.model = args.model
-            self.pretrained_prop_model_path = args.pretrained_prop_model_path
-            self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
-            self.rl_train_worker = args.rl_train_worker
-            self.rl_warmstart_epochs = args.rl_warmstart_epochs
-            self.rl_projection_d = args.rl_projection_d
+        self.word_emb_caps = args.word_emb_caps
+        self.unfreeze_word_emb = args.unfreeze_word_emb
+        self.model = args.model
+        self.pretrained_prop_model_path = args.pretrained_prop_model_path
+        self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
+        self.rl_train_worker = args.rl_train_worker
+        self.rl_warmstart_epochs = args.rl_warmstart_epochs
+        self.rl_projection_d = args.rl_projection_d
 
-            self.rl_gamma_worker = args.rl_gamma_worker
-            self.rl_gamma_manager = args.rl_gamma_manager
-            self.rl_reward_weight_worker = args.rl_reward_weight_worker
-            self.rl_reward_weight_manager = args.rl_reward_weight_manager
+        self.rl_gamma_worker = args.rl_gamma_worker
+        self.rl_gamma_manager = args.rl_gamma_manager
+        self.rl_reward_weight_worker = args.rl_reward_weight_worker
+        self.rl_reward_weight_manager = args.rl_reward_weight_manager
 
-            self.rl_att_layers = args.rl_att_layers
-            self.rl_att_heads = args.rl_att_heads
+        self.rl_att_layers = args.rl_att_layers
+        self.rl_att_heads = args.rl_att_heads
 
-            self.rl_ff_c = args.rl_ff_c
-            self.rl_ff_v = args.rl_ff_v
-            self.rl_ff_a = args.rl_ff_a
-            
-            self.rl_value_function_lr = args.rl_value_function_lr
-            self.rl_cap_warmstart_lr = args.rl_cap_warmstart_lr
-            self.rl_cap_lr = args.rl_cap_lr
+        self.rl_ff_c = args.rl_ff_c
+        self.rl_ff_v = args.rl_ff_v
+        self.rl_ff_a = args.rl_ff_a
+        
+        self.rl_value_function_lr = args.rl_value_function_lr
+        self.rl_cap_warmstart_lr = args.rl_cap_warmstart_lr
+        self.rl_cap_lr = args.rl_cap_lr
+        self.rl_stabilize = args.rl_stabilize
+        self.finetune_prop_encoder = args.finetune_prop_encoder
 
-        elif args.procedure == 'train_cap':
-            self.word_emb_caps = args.word_emb_caps
-            self.unfreeze_word_emb = args.unfreeze_word_emb
-            self.model = args.model
-            self.pretrained_prop_model_path = args.pretrained_prop_model_path
-
-            #if args.pretrained_cap_model_path is not None:
-            #    self.pretrained_cap_model_path = args.pretrained_cap_model_path
-
-            self.finetune_prop_encoder = args.finetune_prop_encoder
-        elif args.procedure == 'train_critic':
-            self.word_emb_caps = args.word_emb_caps
-            self.unfreeze_word_emb = args.unfreeze_word_emb
-            self.model = args.model
-            self.segmentation_vocab_path = args.segmentation_vocab_path
-            self.train_segment_json_path = args.train_segment_json_path
-            
-            self.train_csv_path = args.train_csv_path
-
-        elif args.procedure == 'train_prop':
-            self.word_emb_caps = args.word_emb_caps  # ActivityNetCaptionsDataset() needs it
-            self.pretrained_cap_model_path = args.pretrained_cap_model_path
-            self.finetune_cap_encoder = args.finetune_cap_encoder
-            self.layer_norm = args.layer_norm
-            self.anchors_num_audio = args.anchors_num_audio
-            self.anchors_num_video = args.anchors_num_video
-            self.noobj_coeff = args.noobj_coeff
-            self.obj_coeff = args.obj_coeff
-            self.train_json_path = args.train_json_path
-            self.nms_tiou_thresh = args.nms_tiou_thresh
-            self.strides = {}
-            self.pad_feats_up_to = {}
-            self.kernel_sizes = {}
-            if 'audio' in self.modality:
-                self.strides['audio'] = args.audio_feature_timespan
-                self.pad_feats_up_to['audio'] = args.pad_audio_feats_up_to
-                self.conv_layers_audio = args.conv_layers_audio
-                self.kernel_sizes['audio'] = args.kernel_sizes_audio
-            if 'video' in self.modality:
-                self.feature_timespan_in_fps = args.feature_timespan_in_fps
-                self.fps_at_extraction = args.fps_at_extraction
-                self.strides['video'] = args.feature_timespan_in_fps / args.fps_at_extraction
-                self.pad_feats_up_to['video'] = args.pad_video_feats_up_to
-                self.conv_layers_video = args.conv_layers_video
-                self.kernel_sizes['video'] = args.kernel_sizes_video
-        elif args.procedure == 'evaluate':
-            self.pretrained_cap_model_path = args.pretrained_cap_model_path
-        else:
-            raise NotImplementedError
 
 
         self.dout_p = args.dout_p

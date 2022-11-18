@@ -13,7 +13,7 @@ from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
 from epoch_loops.captioning_epoch_loops import (save_model,
                                                 training_loop, training_loop_incremental,
                                                 validation_1by1_loop)
-from metrics.validation import MeteorCriterion
+
 from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop, warmstart, rl_likelyhood)
 from loss.label_smoothing import LabelSmoothing
 from loss.biased_kl import BiasedKL
@@ -40,17 +40,12 @@ def train_rl_cap(cfg):
     train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
     val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
     val_2_dataset = ActivityNetCaptionsDataset(cfg, 'val_2', get_full_feat=False)
-    meteor_1_criterion = MeteorCriterion(val_1_dataset.train_vocab)
-    meteor_2_criterion = MeteorCriterion(val_2_dataset.train_vocab)
-    # make sure that DataLoader has batch_size = 1!
+
     train_loader = DataLoader(train_dataset, collate_fn=train_dataset.dont_collate)
 
-    #TODO uncomment for later - now uses unecessary ram
+
     val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
     val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
-
-
-    #model = HRLAgent(cfg=cfg, vocabulary=train_dataset.train_vocab)
 
     if cfg.mode == "BMHRL" or cfg.mode == "verbose" or cfg.mode == 'eval':
         model = BMHrlAgent(cfg, train_dataset)
@@ -70,11 +65,6 @@ def train_rl_cap(cfg):
     mv_criterion = torch.nn.MSELoss(reduction='none')
 
     scorer = MeteorScorer(train_dataset.train_vocab, device, cfg.rl_gamma_worker, cfg.rl_gamma_manager)
-
-    
-    #if cfg.optimizer == 'adam':
-    #    optimizer = torch.optim.Adam(model.parameters(), cfg.lr, (cfg.beta1, cfg.beta2), cfg.eps,
-    #                                weight_decay=cfg.weight_decay)
 
     cap_lr = cfg.rl_cap_warmstart_lr if cfg.rl_warmstart_epochs > 0 else cfg.rl_cap_lr
     optimizer = torch.optim.Adam(model.parameters(), lr=cap_lr, weight_decay=cfg.weight_decay)
