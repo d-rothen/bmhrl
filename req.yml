@@ -1,4 +1,4 @@
-name: bmt
+name: bmhrl
 channels:
   - pytorch
   - anaconda

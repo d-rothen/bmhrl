@@ -1,41 +1,37 @@
 import numpy as np
-# import tensorboardX as tensorboard
 import torch
 from torch.utils import tensorboard as tensorboard
+
+# Provided by Iashin and Rahtu at https://github.com/v-iashin/BMT
 from torch.utils.data import DataLoader
+from utilities.learning import adjust_optimizer_lr
+from epoch_loops.validation_loops import validation_1by1_loop
+from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
+from loss.label_smoothing import LabelSmoothing
+from utilities.captioning_utils import average_metrics_in_two_dicts, timer
+#----------------------------------------------------------------
+
 from epoch_loops.captioning_bmrl_loops import bimodal_decoder, audio_decoder, video_decoder, bmhrl_validation_next_word_loop, train_bmhrl_bl, warmstart_bmhrl_bl, train_audio_bl, train_video_bl, warmstart_audio_bl, warmstart_video_bl, analyze_bmhrl_div
 from metrics.batched_meteor import MeteorScorer
 from model.bm_hrl_agent import BMHrlAgent, BMManagerValueFunction, BMWorkerValueFunction, AudioAgent, VideoAgent
-from utilities.learning import adjust_optimizer_lr
 from utilities.out_log import print_to_file as print_log
-
-from captioning_datasets.captioning_dataset import ActivityNetCaptionsDataset
-from epoch_loops.captioning_epoch_loops import (save_model,
-                                                training_loop, training_loop_incremental,
-                                                validation_1by1_loop)
-
 from epoch_loops.captioning_rl_loops import (rl_training_loop, inference, validation_next_word_loop, warmstart, rl_likelyhood)
-from loss.label_smoothing import LabelSmoothing
 from loss.biased_kl import BiasedKL
 from scripts.device import get_device
-from utilities.captioning_utils import average_metrics_in_two_dicts, timer
 from pathlib import Path
 from utilities.folders import get_model_checkpoint_dir
 import sys
 
 def train_rl_cap(cfg):
-    torch.backends.cudnn.benchmark = True    # doing our best to make it replicable
+    torch.backends.cudnn.benchmark = True
     torch.manual_seed(0)
     np.random.seed(0)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # preventing PyTorch from allocating memory on the default device (cuda:0) when the desired 
-    # cuda id for training is not 0.
+
     device = get_device(cfg)
 
     exp_name = cfg.curr_time[2:]
-
-    
 
     train_dataset = ActivityNetCaptionsDataset(cfg, 'train', get_full_feat=False)
     val_1_dataset = ActivityNetCaptionsDataset(cfg, 'val_1', get_full_feat=False)
@@ -46,6 +42,7 @@ def train_rl_cap(cfg):
 
     val_1_loader = DataLoader(val_1_dataset, collate_fn=val_1_dataset.dont_collate)
     val_2_loader = DataLoader(val_2_dataset, collate_fn=val_2_dataset.dont_collate)
+    val_loaders = [val_1_loader, val_2_loader]
 
     if cfg.mode == "BMHRL" or cfg.mode == "verbose" or cfg.mode == 'eval':
         model = BMHrlAgent(cfg, train_dataset)
@@ -56,7 +53,6 @@ def train_rl_cap(cfg):
 
     worker_value_model = BMWorkerValueFunction(cfg)
     manager_value_model = BMManagerValueFunction(cfg)
-
 
     validation_criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
     warmstart_criterion = LabelSmoothing(cfg.smoothing, train_dataset.pad_idx)
@@ -108,26 +104,13 @@ def train_rl_cap(cfg):
     best_metric = 0
     # "early stopping" thing
     num_epoch_best_metric_unchanged = 0
-
     is_warmstart = cfg.rl_warmstart_epochs > 0
-    
     learning_rate_validation = False
-
-    #bmhrl_test(cfg, model, train_loader)
-
-    #bmhrl_test(cfg, model, train_loader)
-
-    #metrics_avg = eval_model(cfg, model, (val_2_loader, 0), bmhrl_greedy_decoder, 0, TBoard)
-    #print(f"Meteor#{metrics_avg['METEOR']}", file=sys.stderr)
-    #return
-
-    #TODO cases for bm bmhrl hrl
-    use_hrl = True
-    alternate_training_switch = True#TODO cfg
+    alternate_training_switch = cfg.rl_train_worker
 
     if cfg.mode == 'BM':
+        return
         alternate_training_switch = True
-        use_hrl = False
         criterion = LabelSmoothing(0.7, train_dataset.pad_idx)
         warmstart_loop = warmstart_bmhrl_bl
         training_loop = train_bmhrl_bl
@@ -147,7 +130,7 @@ def train_rl_cap(cfg):
         warmstart_loop = warmstart_audio_bl
         greedy_decoder = audio_decoder
 
-        metrics_avg = eval_model(cfg, model, (val_1_loader, val_2_loader), greedy_decoder, 0, TBoard)
+        metrics_avg = eval_model(cfg, model, val_loaders, greedy_decoder, 0, TBoard)
         return
     elif cfg.mode == 'VHRL':
         criterion = BiasedKL(0.7, train_dataset.pad_idx)
@@ -155,11 +138,11 @@ def train_rl_cap(cfg):
         warmstart_loop = warmstart_video_bl
         greedy_decoder = video_decoder
         
-        metrics_avg = eval_model(cfg, model, (val_1_loader, val_2_loader), greedy_decoder, 0, TBoard)
+        metrics_avg = eval_model(cfg, model, val_loaders, greedy_decoder, 0, TBoard)
         return
     elif cfg.mode == 'eval':
         greedy_decoder = bimodal_decoder
-        metrics_avg = eval_model(cfg, model, (val_1_loader, val_2_loader), greedy_decoder, 0, TBoard)
+        metrics_avg = eval_model(cfg, model, val_loaders, greedy_decoder, 0, TBoard)
         return
 
 
@@ -179,20 +162,6 @@ def train_rl_cap(cfg):
         # stop training if metric hasn't been changed for cfg.early_stop_after epochs
         if num_epoch_best_metric_unchanged == cfg.early_stop_after:
             break
-        
-        # train
-        #training_loop_incremental(cfg, model, train_loader, criterion, optimizer, epoch, TBoard)
-
-        ############# Test
-
-        #model.module.set_inference_mode(True)
-        # validation (next word)
-        #val_1_loss = validation_next_word_loop(
-        #    cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
-        #)
-        #model.module.set_inference_mode(False)
-        ###########
-
 
         if is_warmstart:#0:
             print(f"Warmstarting HRL agent #{str(epoch)}", file=sys.stderr)
@@ -201,23 +170,17 @@ def train_rl_cap(cfg):
         else:
             models["captioning"] = (model, optimizer, criterion)
             training_loop(cfg, models, scorer, train_loader, epoch, log_prefix, TBoard, alternate_training_switch)
-
-        #model.module.set_inference_mode(True)
         
-        
-        # VALIDATIO?N FOR LEARNING RATE SCHEDULER ------------------------
-        
+        # VALIDATION FOR LEARNING RATE SCHEDULER ------------------------
         if learning_rate_validation:
-        #val_1_loss = bmhrl_validation_next_word_loop(
-        #    cfg, model, val_1_loader, inference, meteor_1_criterion, epoch, TBoard, exp_name
-        #)
-            val_1_loss = bmhrl_validation_next_word_loop(
-                cfg, model, val_1_loader, inference, validation_criterion, epoch, TBoard, exp_name
-            )
-            val_2_loss = bmhrl_validation_next_word_loop(
-                cfg, model, val_2_loader, inference, validation_criterion, epoch, TBoard, exp_name
-            )
-            val_avg_loss = (val_1_loss + val_2_loss) / 2
+            n_loaders = len(val_loaders)
+            val_total_loss = 0
+            for val_loader in val_loaders:
+                val_total_loss += bmhrl_validation_next_word_loop(
+                    cfg, model, val_loader, inference, validation_criterion, epoch, TBoard, exp_name
+                )
+
+            val_avg_loss = val_total_loss / n_loaders
 
             print(f"Validation avg. Loss: {val_avg_loss}", file=sys.stderr)
 
@@ -225,15 +188,12 @@ def train_rl_cap(cfg):
                 scheduler.step(val_avg_loss)
 
         #-------------------------------------------------------------------
-
-
         # validation (1-by-1 word)
-        if True:#epoch >= cfg.one_by_one_starts_at:# or is_warmstart:
+        if epoch >= cfg.one_by_one_starts_at:
 
-            # validation with g.t. proposals
-            metrics_avg = eval_model(cfg, model, (val_1_loader, None), greedy_decoder, epoch, TBoard)
+            metrics_avg = eval_model(cfg, model, val_loaders, greedy_decoder, epoch, TBoard)
             log_prefix = f"METEOR@{metrics_avg['METEOR'] * 100}"
-            # saving the model if it is better than the best so far
+
             if best_metric < metrics_avg['METEOR']:
                 best_metric = metrics_avg['METEOR']
                 
@@ -242,9 +202,6 @@ def train_rl_cap(cfg):
                 worker_value_model.module.save_model(checkpoint_dir)
                 manager_value_model.module.save_model(checkpoint_dir)
 
-                #save_model(cfg, epoch, model, optimizer, val_1_loss, val_2_loss,
-                #           val_1_metrics, val_2_metrics, train_dataset.trg_voc_size)
-                # reset the early stopping criterion
                 num_epoch_best_metric_unchanged = 0
             else:
                 num_epoch_best_metric_unchanged += 1
@@ -265,21 +222,15 @@ def test_print(msg):
     print(msg, file=sys.stderr)
 
 def eval_model(cfg, model, val_loaders, decoder, epoch, TBoard):
+    #TODO speed up eval
     model.module.set_inference_mode(True)
-    val_1_loader, val_2_loader = val_loaders
+    val_loader = val_loaders[0]
 
-    val_1_metrics = validation_1by1_loop(
-        cfg, model, val_1_loader, decoder, epoch, TBoard
+    val_metrics = validation_1by1_loop(
+        cfg, model, val_loader, decoder, epoch, TBoard
     )
 
-    if val_2_loader is None:
-        metrics_avg = val_1_metrics['Average across tIoUs']
-    else:
-        val_2_metrics = validation_1by1_loop(
-            cfg, model, val_2_loader, decoder, epoch, TBoard
-        )
-        metrics_avg = average_metrics_in_two_dicts(val_1_metrics, val_2_metrics)
-        metrics_avg = metrics_avg['Average across tIoUs']
+    metrics_avg = val_metrics['Average across tIoUs']
 
     test_print(metrics_avg['METEOR'])
     test_print(metrics_avg['Bleu_4'])

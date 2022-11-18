@@ -212,7 +212,7 @@ class SegmentCritic(nn.Module):
         super(SegmentCritic, self).__init__()
         self.name = "SegmentCritic"
         embed_dim = cfg.d_model_caps
-        #TODO Or rnn as in paper?
+
         self.lstm = nn.LSTM(embed_dim, 2*embed_dim, num_layers=4, batch_first=True)
         self.gru = nn.GRU(2*embed_dim, 2*embed_dim, num_layers=2, batch_first=True)
         self.lin = nn.Linear(2*embed_dim, 1)
@@ -228,13 +228,10 @@ class SegmentCritic(nn.Module):
         #Pretrained Critic
         with torch.no_grad():
             h_1, _ = self.lstm(embedded_indices)
-            #TODO relu?
+
             h_1 = self.relu(h_1)
             h_2, _ = self.gru(h_1)
 
-            #TODO out for every h
-            #print('h2:', h_2.shape)
-            #x = self.relu(h_2)
             h_2 = self.relu2(h_2)
             x = self.lin(h_2)
 
@@ -766,7 +763,7 @@ class UnimodalAgent(nn.Module):
         worker_feat = self.uni_worker_fus((C, m1), mask)
         manager_feat = self.uni_manager_fus((C, m1), mask)
 
-        goals = self.manager(manager_feat, segment_labels)#torch.reshape(segment_labels, (1,-1)))#TODO remove!!
+        goals = self.manager(manager_feat, segment_labels)
         pred = self.worker(worker_feat, goals, c_mask)
 
         return pred, worker_feat, manager_feat, goals, segment_labels

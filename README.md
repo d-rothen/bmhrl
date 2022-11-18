@@ -1,62 +1,54 @@
-# Multimodal Reinforcement based Dense Video Captioning
+# BMHRL
+This anonymous repository is for temporal use, the code will later be published on GitHub when the blind review phase has passed.
 
-- [Multimodal Reinforcement based Dense Video Captioning](#dense-video-captioning-with-bi-modal-transformer)
-  - [Summary](#summary)
-  - [Structure](#structure)
-  - [Getting Started](#getting-started)
-  - [Train](#train)
-  - [Viewing Results](#viewing-results)
-  
-## Summary
-This project aims to utilize both audio and visual modalities for video captioning in a hierarchical reinforcement learning setting.
-The HRL approach aims to better introduce sentence dynamics into the predicition process, such as sentence structure and focusing on vital information in sequences by learning so called "goals"
-### Structure
-The model consists of a stochastical policy worker agent that produces a probability distribution over the vocabulary given a generated goal, a representation of the multimodal features and the previous predicted word.
+# Getting Started
+----
+## 1. Clone the repository
+----
 
-The goal is given by a manager network that too operates on a representation of the given multimodal features.
-
-In order for the manager network to discern wether a goal has been reached by the worker agent, a critic network (pretrained on the CHARADE caption dataset) labels the given prediction sequence with 0 or 1 for each word, depending on a word being the final word to finish a certain goal.
-
-Upon reaching a goal, the manager will generate a new goal for the worker to operate on.
-
-The whole network is warmstarted with cross entropy loss on GT-sentences in order to enable the worker aswell as the manager to start off with a reasonable approach towards goal generation and word prediciton.
-
-
-## Getting Started
-Clone the repository. Mind the `--recursive` flag to make sure `submodules` are also cloned (evaluation scripts for Python 3 and scripts for feature extraction).
 ```bash
-git clone --recursive https://git.rz.uni-augsburg.de/amiripsh/projektmodul-daniel-rothenpieler.git
+git clone --recursive https://gitlab.com/
 ```
 
-Download features (I3D and VGGish) and word embeddings (GloVe). The script will download them (~10 GB) and unpack into `./data` and `./.vector_cache` folders. *Make sure to run it while being in BMT folder*
+## 2. Download features & checkpoints
+----
+Download features (I3D and VGGish) and word embeddings (GloVe). The script will download them (~10 GB) and unpack into `./data` and `./.vector_cache` folders. *Make sure to run it while being in BMHRL folder*
+
 ```bash
-    bash ./download_data.sh
+bash ./download_data.sh
 ```
 
 Set up a `conda` environment
 ```bash
-conda env create -f ./conda_env.yml
-conda activate bmt
-# install spacy language model. Make sure you activated the conda environment
+conda env create -f ./req.yml
+conda activate bmhrl
 python -m spacy download en
 ```
+Dowload the critic checkpoint
+https://drive.google.com/file/d/1fidxz-WocOTsXN0gWnWpHl3VWEiKz0NX/view?usp=sharing
 
-## Train
+*(optionally)*
+Dowload a baseline to warmstart the model:
+https://drive.google.com/drive/folders/13I6BW4SreXEQgmFLgyCok9K-qOnOyYkY?usp=sharing
 
-The training is seperated in several stages.
-First, the agent is warmstarted by applying cross-entropy loss to the predicted probability of ground truth sentences.
-Secondly either the modules **Worker** or **Manager** will be trained in alternating phases.
-This will reduce instability due to the ambilateral dependency of the Worker and Manager.
+Download the best performing model:
+https://drive.google.com/drive/folders/1zULCCntv8ZdQ3-n-EhmlZLLdJJsHIyDP?usp=sharing
 
-- *Train the captioning module*. Make sure to adjust the paths given in the script above to your own local paths.
+## 3. Run the model
+----
+### Important Parameters:
+- procedure : [train_rl_cap]
+- mode : [BMHRL] 
+- rl_warmstart_epochs: ( # of  epochs the model trains with standard KL Divergence )
+- rl_pretrained_model_dir: ( directory of the checkpoints the model is initialised with)
+- rl_train_worker: [True, False] ( model trains the worker before training the manager )
+- B: ( batchsize )
+- video_features_path: ( path of downloaded video features )
+- audio_features_path: ( path of downloaded audio features )
+- rl_critic_path: ( path of the downloaded critic checkpoint file )
+- rl_pretrained_model_dir ( path of a saved model checkpoint folder )
+
+Example:
 ```bash
-sbatch cap_train.sh
-```
-
-## Viewing Results
-Results will be saved in the ``./log/train_rl_cap/`` directory.
-The latest best performing result is available in this repository at ``./results/logs/``.
-As such they can be viewed via
-```bash
-tensorboard --logdir ./results/logs/
+python main.py --procedure train_rl_cap --mode BMHRL --rl_warmstart_epochs 2 --rl_pretrained_model_dir /home/xxxx/BMHRL/log/train_rl_cap/baseline/checkpoints/E_3 --rl_train_worker True --B 16 --rl_critic_path /home/xxxx/BMHRL/data/critic.cp  --video_features_path /nas/BMHRL/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/BMHRL/data/vggish_npy/
 ```

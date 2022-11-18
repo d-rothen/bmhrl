@@ -95,18 +95,15 @@ if __name__ == "__main__":
     parser.add_argument('--max_len', type=int, default=30, help='maximum size of 1by1 prediction')
     parser.add_argument('--min_freq_caps', type=int, default=1,
                         help='a word should appear min_freq times in train dataset to be in the vocab')
+
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'sgd'])
     parser.add_argument('--betas', type=float, nargs=2, default=[0.9, 0.999], help='betas in adam')
     parser.add_argument('--eps', type=float, default=1e-8, help='eps in adam')
-    parser.add_argument('--momentum', type=float, default=0.0)
-    parser.add_argument('--scheduler', type=str, default='constant',
-                        choices=['constant', 'reduce_on_plateau'], help='lr scheduler')
+
     parser.add_argument('--lr', type=float, default=1e-4, help='lr (if scheduler is constant)')
     parser.add_argument('--weight_decay', type=float, default=0)
-    parser.add_argument('--lr_patience', type=int, help='ReduceLROnPlateau arguments')
-    parser.add_argument('--lr_reduce_factor', type=float,
-                        help='ReduceLROnPlateau arguments, (use 0.2 for 1/5)')
-    parser.add_argument('--B', type=int, default=32, help='batch size per device')
+
+    parser.add_argument('--B', type=int, default=16, help='batch size per device')
     parser.add_argument('--inf_B_coeff', type=int, default=2,
                         help='The batch size on inference will be inf_B_coeff times B arg')
     parser.add_argument('--epoch_num', type=int, default=100, help='number of epochs to train')
@@ -119,16 +116,7 @@ if __name__ == "__main__":
         help='smoothing coeff (= 0 cross ent loss, more -- stronger smoothing) must be in [0, 1]'
     )
     parser.add_argument('--grad_clip', type=float, help='max grad norm for gradients')
-    parser.add_argument('--pretrained_prop_model_path', type=str, 
-                        help='path to pre-trained cap model .pt')
-    parser.add_argument('--finetune_prop_encoder', dest='finetune_prop_encoder',
-                        action='store_true', default=False)
-    parser.add_argument('--pretrained_cap_model_path', type=str,
-                        help='path to pre-trained cap model .pt')
-    parser.add_argument('--finetune_cap_encoder', dest='finetune_cap_encoder',
-                        action='store_true', default=False)
-    parser.add_argument('--obj_coeff', type=float, default=1, help='objectness coeff in loss')
-    parser.add_argument('--noobj_coeff', type=float, default=100, help='noobjectness coeff in loss')
+
     parser.add_argument('--pad_audio_feats_up_to', type=int, default=800, 
                         help='max feature length to pad other features to')
     parser.add_argument('--pad_video_feats_up_to', type=int, default=300, 
@@ -152,13 +140,10 @@ if __name__ == "__main__":
     parser.add_argument('--val_prop_meta_path', type=str, help='Only used in eval_on_learnd_props')
 
     ## MODEL
-    parser.add_argument('--model', type=str, default='av_transformer',
-                        choices=['transformer', 'av_transformer'], help='caption model type')
-    parser.add_argument('--dout_p', type=float, default=0.1, help='dropout probability: in [0, 1]')
-    parser.add_argument('--N', type=int, default=2, help='number of layers in a model')
     parser.add_argument(
         '--d_model', type=int, default=1024,
         help='the internal space in the mullti-headed attention (when input dims of Q, K, V differ)')
+
     parser.add_argument(
         '--d_model_video', type=int,
         help='If use_linear_embedder is true, this is going to be the d_model size for video model'
@@ -175,25 +160,13 @@ if __name__ == "__main__":
         '--use_linear_embedder', dest='use_linear_embedder', action='store_true', default=False,
         help='Whether to include a dense layer between the raw features and input to the model'
     )
-    parser.add_argument('--H', type=int, default=4, help='number of heads in multiheaded attention')
-    parser.add_argument(
-        '--d_ff_video', type=int, help='size of the internal layer of PositionwiseFeedForward')
-    parser.add_argument(
-        '--d_ff_audio', type=int, help='size of the internal layer of PositionwiseFeedForward')
-    parser.add_argument(
-        '--d_ff_caps', type=int, help='size of the internal layer of PositionwiseFeedForward')
-    parser.add_argument('--anchors_num_video', type=int, default=128)
-    parser.add_argument('--anchors_num_audio', type=int, default=48)
-    parser.add_argument('--kernel_sizes_audio', type=int, nargs='+', 
-                        default=[5, 13, 23, 35, 51, 69, 91, 121, 161, 211])
-    parser.add_argument('--kernel_sizes_video', type=int, nargs='+',
-                        default=[1, 5, 9, 13, 19, 25, 35, 45, 61, 79])
-    parser.add_argument('--conv_layers_audio', type=int, nargs='*', default=[512, 512], 
-                        help='intermediate layer dims in proposal gen heads')
-    parser.add_argument('--conv_layers_video', type=int, nargs='*', default=[512, 512], 
-                        help='intermediate layer dims in proposal gen heads')
-    parser.add_argument('--layer_norm', dest='layer_norm', action='store_true', default=False, 
-                        help='whether to use layer norm in proposal generation heads')
+
+    parser.add_argument('--dout_p', type=float, default=0.1, help='dropout probability: in [0, 1]')
+
+    parser.add_argument('--scheduler', type=str, default='constant',
+                        choices=['constant', 'reduce_on_plateau'], help='lr scheduler')
+
+
 
     parser.add_argument('--procedure', type=str, required=True, 
         choices=['train_rl_cap'])

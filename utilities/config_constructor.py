@@ -34,8 +34,6 @@ class Config(object):
         self.min_freq_caps = args.min_freq_caps
         self.mode = args.mode
 
-        # model
-        self.pretrained_cap_model_path = args.pretrained_cap_model_path
         #rl agent
 
         self.rl_low_level_enc_d = args.rl_low_level_enc_d
@@ -53,8 +51,7 @@ class Config(object):
 
         self.word_emb_caps = args.word_emb_caps
         self.unfreeze_word_emb = args.unfreeze_word_emb
-        self.model = args.model
-        self.pretrained_prop_model_path = args.pretrained_prop_model_path
+
         self.rl_pretrained_model_dir = args.rl_pretrained_model_dir
         self.rl_train_worker = args.rl_train_worker
         self.rl_warmstart_epochs = args.rl_warmstart_epochs
@@ -76,12 +73,9 @@ class Config(object):
         self.rl_cap_warmstart_lr = args.rl_cap_warmstart_lr
         self.rl_cap_lr = args.rl_cap_lr
         self.rl_stabilize = args.rl_stabilize
-        self.finetune_prop_encoder = args.finetune_prop_encoder
-
-
 
         self.dout_p = args.dout_p
-        self.N = args.N
+
         self.use_linear_embedder = args.use_linear_embedder
         if args.use_linear_embedder:
             self.d_model_video = args.d_model_video
@@ -89,19 +83,16 @@ class Config(object):
         else:
             self.d_model_video = self.d_vid
             self.d_model_audio = self.d_aud
-        self.H = args.H
+
         self.d_model = args.d_model
         self.d_model_caps = args.d_model_caps
-        if 'video' in self.modality:
-            self.d_ff_video = 4*self.d_model_video if args.d_ff_video is None else args.d_ff_video
-        if 'audio' in self.modality:
-            self.d_ff_audio = 4*self.d_model_audio if args.d_ff_audio is None else args.d_ff_audio
-        self.d_ff_caps = 4*self.d_model_caps if args.d_ff_caps is None else args.d_ff_caps
+
         # training
         self.device_ids = args.device_ids
         self.device = f'cuda:{self.device_ids[0]}' if torch.cuda.is_available() else 'cpu'
         self.train_batch_size = args.B * len(self.device_ids)
         self.inference_batch_size = args.inf_B_coeff * self.train_batch_size
+        self.scheduler = args.scheduler
         self.epoch_num = args.epoch_num
         self.one_by_one_starts_at = args.one_by_one_starts_at
         self.early_stop_after = args.early_stop_after
@@ -114,22 +105,9 @@ class Config(object):
             self.beta1, self.beta2 = args.betas
             self.eps = args.eps
             self.weight_decay = args.weight_decay
-        elif self.optimizer == 'sgd':
-            self.momentum = args.momentum
-            self.weight_decay = args.weight_decay
         else:
             raise Exception(f'Undefined optimizer: "{self.optimizer}"')
-        # lr scheduler
-        self.scheduler = args.scheduler
-        if self.scheduler == 'constant':
-            self.lr = args.lr
-            self.weight_decay = args.weight_decay
-        elif self.scheduler == 'reduce_on_plateau':
-            self.lr = args.lr
-            self.lr_reduce_factor = args.lr_reduce_factor
-            self.lr_patience = args.lr_patience
-        else:
-            raise Exception(f'Undefined scheduler: "{self.scheduler}"')
+
         # evaluation
         self.reference_paths = args.reference_paths
         self.tIoUs = args.tIoUs
