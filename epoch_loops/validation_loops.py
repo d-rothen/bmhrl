@@ -5,6 +5,7 @@ import torch
 import spacy
 from time import time
 
+from evaluation.evaluate import ANETcaptions
 from model.masking import mask, make_masks
 from scripts.device import get_device
 from utilities.captioning_utils import HiddenPrints, get_lr
@@ -150,3 +151,27 @@ def validation_next_word_loop(cfg, model, loader, decoder, criterion, epoch, TBo
     val_total_loss_norm = val_total_loss / len(loader)
 
     return val_total_loss_norm
+
+def calculate_metrics(reference_paths, submission_path, tIoUs, max_prop_per_vid, verbose=True, only_proposals=False):
+    metrics = {}
+    PREDICTION_FIELDS = ['results', 'version', 'external_data']
+    evaluator = ANETcaptions(
+        reference_paths, submission_path, tIoUs, 
+        max_prop_per_vid, PREDICTION_FIELDS, verbose, only_proposals)
+    evaluator.evaluate()
+    
+    for i, tiou in enumerate(tIoUs):
+        metrics[tiou] = {}
+
+        for metric in evaluator.scores:
+            score = evaluator.scores[metric][i]
+            metrics[tiou][metric] = score
+
+    # Print the averages
+    
+    metrics['Average across tIoUs'] = {}
+    for metric in evaluator.scores:
+        score = evaluator.scores[metric]
+        metrics['Average across tIoUs'][metric] = sum(score) / float(len(score))
+    
+    return metrics

@@ -47,33 +47,6 @@ class ModalityProjection(nn.Module):
         x = self.dropout(x)
         return x
 
-class BMFusion2(nn.Module):
-    def __init__(self, cfg) -> None:
-        super(BMFusion, self).__init__()
-        self.d_video = cfg.d_vid
-        self.d_audio = cfg.d_aud
-        self.d_proj = cfg.rl_projection_d
-
-        self.project_vid = ModalityProjection(self.d_video, self.d_proj, 0)
-        self.project_aud = ModalityProjection(self.d_audio, self.d_proj, 0)
-
-    def forward(self, x):
-        x_vid, x_aud = x
-        v_proj = self.project_vid(x_vid)
-        a_proj = self.project_aud(x_aud)
-
-class AReLU(nn.Module):
-    def __init__(self, alpha=0.90, beta=2.0):
-        super(AReLU, self).__init__()
-        self.alpha = nn.Parameter(torch.tensor([alpha]))
-        self.beta = nn.Parameter(torch.tensor([beta]))
-
-    def forward(self, input):
-        alpha = torch.clamp(self.alpha, min=0.01, max=0.99)
-        beta = 1 + torch.sigmoid(self.beta)
-
-        return F.relu(input) * beta - F.relu(-input) * alpha
-
 class BMFusionLayer(nn.Module):
     def __init__(self, d_model_A, d_model_V, d_model_C, d_model, d_ff_c, dout_p, H) -> None:
         super(BMFusionLayer, self).__init__()
@@ -283,15 +256,13 @@ class BMWorkerValueFunction(ModelBase):
         self.value_function = PositionwiseFeedForward(input_d, input_d*2, dout_p)
         self.projection = nn.Linear(input_d, 1)
         self.activation = nn.ReLU()
-        #self.scaler_activation = nn.ReLU()
-        #self.scaler = nn.Sigmoid()#Meteor Reward function goes between 0 and 1
+
 
     def forward(self, x):
         w_feat, goal = x
         predicted_value = self.value_function(torch.cat([w_feat, goal], dim=-1))
         predicted_value = self.activation(predicted_value)
         predicted_value = self.projection(predicted_value)
-        #predicted_value = self.scaler_activation(predicted_value)
         return predicted_value#self.scaler(predicted_value)
 
 class BMManagerValueFunction(ModelBase):
@@ -303,7 +274,6 @@ class BMManagerValueFunction(ModelBase):
         self.value_function = PositionwiseFeedForward(d_manager_feat, d_manager_feat*2, dout_p)
         self.projection = nn.Linear(d_manager_feat, 1)
         self.activation = nn.ReLU()
-        #self.scaler = nn.Sigmoid()
     
     def forward(self, x):
         predicted_value = self.value_function(x)
