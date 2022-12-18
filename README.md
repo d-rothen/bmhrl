@@ -1,17 +1,24 @@
 # BMHRL
-This anonymous repository is for temporal use, the code will later be published on GitHub when the blind review phase has passed.
+
+The **B**i**M**odal **H**ierarchical **R**einforcement **L**earning Agent is a hierarchical captioning model using audiovisual data to generate captions for videos.
+It has been trained on the [ActivityNetCaptions](https://cs.stanford.edu/people/ranjaykrishna/densevid/) dataset, achieving a Meteor Score of 10.80.
+
+
+• [ArXiv](https://arxiv.org/)
+
+![Model](model.png)
 
 # Getting Started
 ----
 ## 1. Clone the repository
-----
+
 
 ```bash
 git clone --recursive https://gitlab.com/
 ```
 
 ## 2. Download features & checkpoints
-----
+
 Download features (I3D and VGGish) and word embeddings (GloVe). The script will download them (~10 GB) and unpack into `./data` and `./.vector_cache` folders. *Make sure to run it while being in BMHRL folder*
 
 ```bash
@@ -35,7 +42,7 @@ Download the best performing model:
 https://drive.google.com/drive/folders/1zULCCntv8ZdQ3-n-EhmlZLLdJJsHIyDP?usp=sharing
 
 ## 3. Run the model
-----
+
 ### Important Parameters:
 - procedure : [train_rl_cap]
 - mode : [BMHRL] 
