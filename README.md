@@ -65,3 +65,7 @@ python main.py --procedure train_rl_cap --mode BMHRL --rl_warmstart_epochs 2 --r
 ```
 
 The best performing model checkpoints as well as tensorboard logs will be saved in the `./log` directory 
+View results via
+```bash
+tensorboard --logdir ./log/[procedue]
+```
