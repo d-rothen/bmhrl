@@ -64,7 +64,8 @@ Example:
 python main.py --procedure train_rl_cap --mode BMHRL --rl_warmstart_epochs 2 --rl_pretrained_model_dir /home/xxxx/BMHRL/log/train_rl_cap/baseline/checkpoints/E_3 --rl_train_worker True --B 16 --rl_critic_path /home/xxxx/BMHRL/data/critic.cp  --video_features_path /nas/BMHRL/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/BMHRL/data/vggish_npy/
 ```
 
-The best performing model checkpoints as well as tensorboard logs will be saved in the `./log` directory 
+The best performing model checkpoints as well as tensorboard logs will be saved in the `./log` directory.
+
 View results via
 ```bash
 tensorboard --logdir ./log/[procedue]
