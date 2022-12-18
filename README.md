@@ -2,11 +2,14 @@
 
 The **B**i**M**odal **H**ierarchical **R**einforcement **L**earning Agent is a hierarchical captioning model using audiovisual data to generate captions for videos.
 It has been trained on the [ActivityNetCaptions](https://cs.stanford.edu/people/ranjaykrishna/densevid/) dataset, achieving a Meteor Score of 10.80.
+We utilise the bimodal attention mechanism and dataloder provided by [Iashin and Rahtu](https://github.com/v-iashin/BMT)
 
 
 • [ArXiv](https://arxiv.org/)
 
 ![Model](model.png)
+
+
 
 # Getting Started
 ----
@@ -14,7 +17,7 @@ It has been trained on the [ActivityNetCaptions](https://cs.stanford.edu/people/
 
 
 ```bash
-git clone --recursive https://gitlab.com/
+git clone --recursive https://github.com/d-rothen/bmhrl
 ```
 
 ## 2. Download features & checkpoints
@@ -45,17 +48,20 @@ https://drive.google.com/drive/folders/1zULCCntv8ZdQ3-n-EhmlZLLdJJsHIyDP?usp=sha
 
 ### Important Parameters:
 - procedure : [train_rl_cap]
-- mode : [BMHRL] 
-- rl_warmstart_epochs: ( # of  epochs the model trains with standard KL Divergence )
-- rl_pretrained_model_dir: ( directory of the checkpoints the model is initialised with)
-- rl_train_worker: [True, False] ( model trains the worker before training the manager )
-- B: ( batchsize )
+- mode : [BMHRL, eval] (use eval to forgo training and evaluate on a pretrained model)
 - video_features_path: ( path of downloaded video features )
 - audio_features_path: ( path of downloaded audio features )
 - rl_critic_path: ( path of the downloaded critic checkpoint file )
-- rl_pretrained_model_dir ( path of a saved model checkpoint folder )
+
+Optional:
+- rl_warmstart_epochs: ( # of  epochs the model trains with standard KL Divergence )
+- rl_pretrained_model_dir: ( directory of the checkpoints the model is initialised with, required for eval mode)
+- rl_train_worker: [True, False] ( model trains the worker before training the manager )
+- B: ( batchsize )
 
 Example:
 ```bash
 python main.py --procedure train_rl_cap --mode BMHRL --rl_warmstart_epochs 2 --rl_pretrained_model_dir /home/xxxx/BMHRL/log/train_rl_cap/baseline/checkpoints/E_3 --rl_train_worker True --B 16 --rl_critic_path /home/xxxx/BMHRL/data/critic.cp  --video_features_path /nas/BMHRL/data/i3d_25fps_stack64step64_2stream_npy/ --audio_features_path /nas/BMHRL/data/vggish_npy/
 ```
+
+The best performing model checkpoints as well as tensorboard logs will be saved in the `./log` directory 
